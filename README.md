@@ -1,19 +1,29 @@
-# Enterprise Contract & Certificate Lifecycle Management (CLM) Platform
+#                           
+
 
 > **Version:** 4.0.0  
 > **Live Demo:** [https://clm-website-1cc7.vercel.app/](https://clm-website-1cc7.vercel.app/)  
-> **GitHub:** [https://github.com/GOKUL-THAN/cmd](https://github.com/GOKUL-THAN/cmd)  
-> **Status:** Demonstration / pre-production; current verification does not establish production readiness
+> **GitHub:** [https://github.com/GOKUL-THAN/clm](https://github.com/GOKUL-THAN/clm)<br>
+> **Status:** Demonstration / pre-production; current verification does not establish production readiness<br>
 > **Architecture:** Zero-Trust Hybrid SaaS Control Plane + Customer In-VPC Satellite Gateway  
 
-> **Latest local verification (2026-11-06):** The staged gateway module passed
-> tests, `go vet`, and a Linux/amd64 build with Go 1.27.3 after the latest
-> vSatellite command-boundary changes. The staged SaaS and vSatellite modules
-> passed their recorded checks on 2026-11-05; SaaS database tests used a
-> disposable PostgreSQL 18.6 app-role connection. Race detection, PostgreSQL 15
-> CI, provider integrations, staging, and production remain unverified. See
-> [EXECUTION_CHECKPOINT.md](./EXECUTION_CHECKPOINT.md) and
-> [MASTER_REQUIREMENT_TRACKER.md](./MASTER_REQUIREMENT_TRACKER.md).
+> **Verification snapshot (2026-11-06):** Staged SaaS, satellite-gateway,
+> and vSatellite Go modules passed tests, `go vet`, and builds with Go 1.27.3.
+> The gateway also passed a Linux/amd64 cross-build. SaaS database tests used a
+> disposable PostgreSQL 18.6 app-role connection. The latest CI run passed all
+> nine jobs, including Go race tests, PostgreSQL 15 RLS tests, container and
+> dependency scans, Terraform validation, and build/scan/non-root checks for
+> all three container images:
+> [run 42257224350](https://github.com/GOKUL-THAN/clm/actions/runs/42257224350).
+> The run uploaded a CycloneDX filesystem SBOM and generated an attestation,
+> which was verified with GitHub CLI for this repository. This attestation
+> covers the SBOM, not the container images.
+> Kubernetes workload service accounts disable automatic API-token mounts;
+> a cluster deployment was not tested. Provider integrations, staging, and
+> production remain unverified. See
+> [EXECUTION_CHECKPOINT.md](./EXECUTION_CHECKPOINT.md),
+> [MASTER_REQUIREMENT_TRACKER.md](./MASTER_REQUIREMENT_TRACKER.md), and
+> [DEVSECOPS_AND_STANDARDS_STATUS.md](./DEVSECOPS_AND_STANDARDS_STATUS.md).
 
 ---
 
@@ -21,7 +31,7 @@
 
 1. [Overview](#1-overview)
 2. [Quick Start](#2-quick-start)
-3. [Live Demo Credentials](#3-live-demo-credentials)
+3. [Demo Access and Preview](#3-demo-access-and-preview)
 4. [Architecture](#4-architecture)
 5. [The 26-Stage Contract Lifecycle](#5-the-26-stage-contract-lifecycle)
 6. [Certificate Lifecycle Management](#6-certificate-lifecycle-management)
@@ -41,7 +51,10 @@
 
 ## 1. Overview
 
-The CLM Platform is a unified enterprise system that manages two interconnected lifecycles:
+The CLM repository combines an in-memory Node.js demonstration with Go services
+for a contract-management control plane, certificate gateway, and vSatellite
+agent. The demo and Go services are separate execution paths; a demo screen or
+fixture is not evidence that a corresponding production integration is active.
 
 - **Contract Lifecycle** — 26 stages from intake to AI-assisted archival, covering every department in the organization
 - **Certificate/TLS Lifecycle** — Discovery, issuance, deployment, renewal, revocation via in-VPC satellite gateway
@@ -50,38 +63,42 @@ The CLM Platform is a unified enterprise system that manages two interconnected 
 
 | Metric | Value |
 |---|---|
-| Live contracts | 15 (across all lifecycle stages) |
-| Active portfolio value | $14,745,000 |
-| Enterprise features | 400 (across 20 domains) |
-| API endpoints | 87 |
+| Demo contract fixtures | 15 (illustrative, in-memory records) |
+| Demo portfolio value | $14,745,000 (fixture data) |
+| Feature registry entries | 400 across 20 domains; registry presence is not implementation proof |
+| Mock API routes | Approximately 87; this is not the Go API endpoint count |
 | Local Node checks | 40 scenario, 400 registry smoke, 26 lifecycle, 10 corporate, 3 workflow, and 15 global checks passed; these are not a measure of production coverage |
-| Frontend pages | 35 menu pages |
-| Go source files | 365 |
-| Database migrations | 14 |
-| Supported CA providers | 4 (Let's Encrypt, DigiCert, Private CA, AWS ACM) |
+| Frontend pages | Portal navigation pages; not a measure of completed backend workflows |
+| Go modules | SaaS control plane, satellite gateway, and vSatellite |
+| Database migrations | 10 numbered application migrations (001–010), plus the separate Keycloak bootstrap migration |
+| CA integrations | Adapters exist; live provider access depends on configuration and credentials |
 | Certificate lifecycle stages | 6 |
-| Compliance frameworks | GDPR, PCI-DSS, SOC 2, HIPAA |
+| Compliance mappings | GDPR, PCI-DSS, SOC 2, HIPAA; no independent certification is claimed |
 
 ---
 
 ## 2. Quick Start
 
-### Demo (no dependencies required)
+### Local demo (Node.js only; no database required)
 
 ```bash
 # Clone the repository
-git clone https://github.com/GOKUL-THAN/cmd.git
-cd cmd
+git clone https://github.com/GOKUL-THAN/clm.git
+cd clm
 
-# Start the demo server (Node.js 18+ required)
-node dev-server.js
+# Start the in-memory mock portals (Node.js 18+ required)
+npm start
 
 # Open browser
 # Admin Portal:   http://localhost:3000
 # Gateway Portal: http://localhost:8080
 ```
 
-### Or use npm scripts
+`npm start` serves local UI assets and mock APIs from `dev-server.js`; it does
+not start the Go services, connect to PostgreSQL, or contact real certificate
+authorities, cloud accounts, or endpoint agents. It listens on loopback.
+
+### Other npm scripts
 
 ```bash
 npm start                 # Start both portals
@@ -90,24 +107,23 @@ npm run test:lifecycle    # Run 26-stage lifecycle tests
 npm run test:400          # Run 400 feature registry tests
 npm run test:corporate    # Run corporate module tests
 npm run demo:health       # Health check all endpoints
-npm run demo:setup        # Verify setup
-npm run demo:stop         # Stop all servers
+npm run demo:setup        # Set up the optional database-backed demo workflow
+npm run demo:test         # Run that workflow (requires its documented setup)
+npm run demo:stop         # Stop demo servers
 ```
 
 ---
 
-## 3. Live Demo Credentials
+## 3. Demo Access and Preview
 
-> These are **demo-only** credentials. Never use in production.
+The Node.js mock auth endpoint returns a fixed demo token and does not provide
+production authentication. Do not enter real credentials, reuse a real
+password, or treat a successful demo login as proof of identity controls.
 
-| Role | Email | Password |
-|---|---|---|
-| Super Admin | `admin@enterprise.internal` | `Demo@2024!` |
-| Legal Counsel | `legal-lead@enterprise.internal` | `Demo@2024!` |
-| Auditor | `auditor@enterprise.internal` | `Demo@2024!` |
-| Finance Approver | `finance@enterprise.internal` | `Demo@2024!` |
+The following links point to the configured demo deployment; availability and
+access behavior may change:
 
-**Live URL:** [https://clm-website-1cc7.vercel.app/](https://clm-website-1cc7.vercel.app/)
+**Demo URL:** [https://clm-website-1cc7.vercel.app/](https://clm-website-1cc7.vercel.app/)
 
 **Gateway Portal:** [https://clm-website-1cc7.vercel.app/gateway](https://clm-website-1cc7.vercel.app/gateway)
 
@@ -117,9 +133,13 @@ npm run demo:stop         # Stop all servers
 
 ## 4. Architecture
 
+The diagram below is the intended target architecture, not a depiction of the
+local Node.js demo or evidence of a deployed production environment. The demo
+portals and Go service modules are separate execution paths.
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                    INTERNET (Vercel / Production Cloud)                  │
+│                    INTERNET (Target SaaS deployment)                    │
 │                                                                          │
 │   Browser/API Client                                                     │
 │        │                                                                 │
@@ -132,7 +152,7 @@ npm run demo:stop         # Stop all servers
 │  │  Obligations │ Risk │ Compliance │ Integrations                │    │
 │  │  PostgreSQL + Redis + S3 + Audit Event Sink                    │    │
 │  └────────────────────────────────┬────────────────────────────────┘    │
-│                                   │ outbound mTLS — NO private keys     │
+│                                   │ intended outbound mTLS               │
 │              ─── CUSTOMER TRUST BOUNDARY ───                            │
 │  ┌────────────────────────────────▼────────────────────────────────┐    │
 │  │         Satellite Gateway  (port 8080)                          │    │
@@ -216,7 +236,8 @@ MACRO 8 — ANALYTICS & AI
   Stage 26 ▶ AI Contract Intelligence     Clause extraction, risk detection, Q&A
 ```
 
-**Test result:** `26/26 Stages Verified — LIFECYCLE VERIFICATION SUMMARY PASSED`
+The lifecycle harness's stage count does not establish that every stage is
+implemented as a production workflow.
 
 ---
 
@@ -232,7 +253,7 @@ the gateway does not currently dispatch certificate deployments to vSatellites.
 ```
 Stage 1: Discovery      ──▶  CIDR scanning, DNS resolution, endpoint inventory
 Stage 2: Issuance       ──▶  CA orders (Let's Encrypt, DigiCert, Private CA, AWS ACM)
-Stage 3: Deployment     ──▶  AWS ALB, K8s Secrets, Nginx, PKCS#12 files
+Stage 3: Deployment     ──▶  Configured targets (gateway-local deployments; vSatellite deployment disabled)
 Stage 4: Verification   ──▶  Endpoint health check, chain validation, TLS version
 Stage 5: Renewal        ──▶  Automated scheduler, 30-day warning, ACME auto-renew
 Stage 6: Revocation     ──▶  OCSP stapling, CRL distribution, emergency revoke
@@ -249,7 +270,7 @@ they are not evidence of live CA or endpoint integrations.
 | `api-uat.enterprise.internal` | Let's Encrypt | ECDSA P-256 | 12 | **Expiring Soon** |
 | `internal-mgmt.local` | Enterprise Private CA | RSA 4096 | 280 | Active |
 
-### CA Providers Configured
+### Illustrative CA Provider Records
 
 | Provider | Type | Status | Orders |
 |---|---|---|---|
@@ -259,6 +280,9 @@ they are not evidence of live CA or endpoint integrations.
 | AWS ACM Private CA | AWS SDK | Inactive | Not configured |
 
 ### Deploy Targets
+
+The entries below are illustrative demo records, not evidence that these
+environments are connected or healthy.
 
 | Target | Type | Cluster/Host | Status |
 |---|---|---|---|
@@ -282,39 +306,46 @@ they are not evidence of live CA or endpoint integrations.
 
 ### SaaS Control Plane (`http://localhost:3000`)
 
+This table describes portal navigation and example UI data. In local demo mode,
+the Node.js server returns in-memory mock responses; labels such as “Live” do
+not mean the page is connected to a production service.
+
 | Menu | Page | API Endpoint | Data |
 |---|---|---|---|
-| Dashboard | Overview stats, satellites, approvals | Multiple | Live |
+| Dashboard | Overview stats, satellites, approvals | Multiple | Mock summary |
 | Contracts | Repository, 26-stage view, filter | `GET /api/v1/contracts` | 15 contracts, $14.7M |
 | Contract Metrics | Portfolio analytics bar | `GET /api/v1/contracts/metrics` | 10 active, 3 negotiating |
-| Intake & Requests | Request management, convert to contract | `GET /api/v1/contract-requests` | Live |
+| Intake & Requests | Request management, convert to contract | `GET /api/v1/contract-requests` | Mock response |
 | Templates & Clauses | Template catalog, clause library | `GET /api/v1/templates` | 5+ templates |
 | Negotiation & Redlines | Counterparty workspace, redline tracking | `GET /api/v1/negotiations/:id` | Active sessions |
 | E-Sign & Digital PKI | Signature workflow, evidence bundles | `GET /api/v1/signatures/:id` | 24 signature records |
 | Obligation Calendar | Milestone tracking, fulfillment | `GET /api/v1/obligations` | 3 obligations |
 | Approval Hub | L1/L2/L3 pending queue | `GET /api/v1/approvals/pending` | 2 pending |
 | AI Legal Intelligence | Analysis, extraction, Q&A | `GET /api/v1/ai-contracts/:id/analysis` | Risk + clauses |
-| CLM Analytics | Compliance rate, spend analysis | `GET /api/v1/clm-reports/summary` | Live |
+| CLM Analytics | Compliance rate, spend analysis | `GET /api/v1/clm-reports/summary` | Illustrative metrics |
 | Corporate Depts (14) | Department budgets and contracts | `GET /api/v1/corporate-departments` | 14 departments |
 | Procurement & Suppliers | Supplier scorecards | `GET /api/v1/suppliers` | 3 suppliers |
 | Legal Operations | Matter management, litigation hold | `GET /api/v1/legal-matters` | 2 matters |
-| Financial & Spend | Commitment tracking, 3-way match | `GET /api/v1/financials` | Live |
+| Financial & Spend | Commitment tracking, 3-way match | `GET /api/v1/financials` | Mock response |
 | Risk Register | Cryptographic risk posture | `GET /api/v1/risk/posture` | Score: 28 |
 | Webhooks & Integrations | Slack, ServiceNow, webhook mgmt | `GET /api/v1/integrations` | 2 integrations |
-| ITSM War Room | Incident + service request tracking | `GET /api/v1/itsm/incidents` | Live |
+| ITSM War Room | Incident + service request tracking | `GET /api/v1/itsm/incidents` | Mock response |
 | Departments & Budgets | Cost centers, cert quotas | `GET /api/v1/departments` | 3 departments |
 | Cloud Accounts | AWS/GCP cloud account mgmt | `GET /api/v1/cloud-accounts` | 2 accounts |
 | Gateways | Fleet management, deploy history | `GET /api/v1/satellites` | 1 gateway |
-| Deploy Jobs | Terraform deploy job tracking | `GET /api/v1/satellites/deploy` | Live |
-| Identity Management | Keycloak users, roles, groups | `GET /api/v1/identity/status` | Live |
-| Onboarding | New customer preflight + bootstrap | `POST /api/v1/onboarding/preflight` | Live |
-| Directory Mappings | Group → role SSO mappings | `GET /api/v1/tenants/:id/sso/mappings` | Live |
+| Deploy Jobs | Terraform deploy job tracking | `GET /api/v1/satellites/deploy` | Mock response |
+| Identity Management | Keycloak users, roles, groups | `GET /api/v1/identity/status` | Mock response |
+| Onboarding | New customer preflight + bootstrap | `POST /api/v1/onboarding/preflight` | Mock flow |
+| Directory Mappings | Group → role SSO mappings | `GET /api/v1/tenants/:id/sso/mappings` | Mock response |
 | 400 Enterprise Features | Full feature domain explorer | `GET /api/v1/features` | 400 features |
-| SDLC Workflows | Kiro workflow engine | `GET /api/v1/workflows/audit-log` | Live |
-| Activity Log | Workflow + event history | Multiple | Live |
+| SDLC Workflows | Kiro workflow engine | `GET /api/v1/workflows/audit-log` | Mock response |
+| Activity Log | Workflow + event history | Multiple | Demo event records |
 | Organization Hub | Tenants, subscription, billing | `GET /api/v1/tenants` | 2 tenants |
 
 ### Gateway Portal (`http://localhost:8080`)
+
+In local demo mode this portal also uses mock APIs. The Go gateway is a separate
+service with its own routes and configuration.
 
 | Menu | Data |
 |---|---|
@@ -337,7 +368,11 @@ they are not evidence of live CA or endpoint integrations.
 
 ## 8. API Reference
 
-All endpoints respond to `https://clm-website-1cc7.vercel.app/api/v1/...`
+The paths below are an orientation to the demo and Go APIs, not a guarantee that
+every route is exposed by every deployment. The Vercel function delegates to the
+Node.js mock API; the Go control plane and gateway have separate routers. Check
+the corresponding service router and deployment configuration for authoritative
+route availability.
 
 ### Contract Management
 
@@ -395,6 +430,10 @@ POST   /api/v1/financials/three-way-match        Reconcile PO/GR/Invoice
 
 ### Certificate Lifecycle (Gateway)
 
+Certificate deployment through the gateway runs locally on that gateway.
+Dispatching certificate deployment to vSatellites is disabled until tenant
+authorization and authenticated deployment transport are available.
+
 ```
 GET    /api/v1/status                            Gateway health
 GET    /api/v1/certificates                      Certificate inventory
@@ -446,10 +485,15 @@ GET    /api/v1/identity/sessions                 Active sessions
 
 ## 9. End-to-End Demo Walkthrough
 
+This walkthrough uses seeded demo records and mock API responses. Mutations are
+not durable and do not perform real contract signing, AI inference, CA issuance,
+cloud changes, network scans, or certificate deployment. Do not use production
+credentials or real target networks with the demo.
+
 ### Step 1 — Login
 
-1. Open [https://clm-website-1cc7.vercel.app/](https://clm-website-1cc7.vercel.app/)
-2. Enter: `admin@enterprise.internal` / `Demo@2024!`
+1. Start the local demo with `npm start` and open `http://localhost:3000`.
+2. Use the sign-in screen to explore the demo UI; mock authentication returns a fixed demo token and is not real identity verification.
 3. Click **Sign In**
 
 ### Step 2 — Dashboard
@@ -495,7 +539,7 @@ Navigate to **Contracts Repository** to see all 15 contracts:
 2. Navigate to **E-Sign & Digital PKI** tab
 3. View 2 signers: 1 signed, 1 awaiting
 4. Click **Sign Contract** for the pending signer
-5. View the cryptographic evidence bundle (SHA-256 hash, timestamp, compliance certifications)
+5. View the demo evidence bundle (SHA-256 hash and timestamp); it is not a real signature or compliance certification
 
 ### Step 8 — AI Contract Intelligence
 
@@ -508,18 +552,16 @@ Navigate to **Contracts Repository** to see all 15 contracts:
 ### Step 9 — Certificate Management (Gateway Portal)
 
 1. Open [https://clm-website-1cc7.vercel.app/gateway](https://clm-website-1cc7.vercel.app/gateway)
-2. View 3 certificates — note `api-uat.enterprise.internal` expiring in 12 days
-3. Navigate to **CA Management** → view 4 providers
-4. Navigate to **Discover** → trigger CIDR scan on `10.125.0.0/16`
-5. Navigate to **Policies** → see enforcement rules in action
-6. Navigate to **Scheduler** → trigger a renewal job manually
+2. View the illustrative certificate fixtures (their expiry values are demo data)
+3. Navigate to **CA Management** → inspect the provider UI and mock responses
+4. Navigate to **Discover** → review the demo scan flow; do not scan a real network
+5. Navigate to **Policies** and **Scheduler** → inspect the UI behavior only
 
 ### Step 10 — Compliance & Audit
 
-1. Navigate to **CLM Analytics & Reports** — view 92% compliance rate
-2. Navigate to **Risk Register** — risk score 28, PQC transition readiness flag
-3. Navigate to **Activity Log** — view immutable audit trail
-4. Gateway: navigate to **Compliance Report** — GDPR/PCI-DSS/SOC 2/HIPAA green
+1. Navigate to **CLM Analytics & Reports** and **Risk Register** to inspect illustrative metrics
+2. Navigate to **Activity Log** to inspect demo event records (not a production audit)
+3. Gateway: open **Compliance Report** to inspect the demo report presentation
 
 ---
 
@@ -529,28 +571,27 @@ Navigate to **Contracts Repository** to see all 15 contracts:
 
 | Component | Technology |
 |---|---|
-| Server | Node.js 24 (built-in `http` module) |
+| Server | Node.js 18+ (built-in `http` module; see `package.json`) |
 | Admin Portal | Vanilla JS, HTML5, CSS3 |
 | Gateway Portal | Vanilla JS, HTML5, CSS3 |
-| API Engine | dev-server.js (in-memory mock, 87 routes) |
-| Deployment | Vercel (serverless, `/api/index.js`) |
-| Auth (demo) | Mock JWT (`mock-jwt-token-clm-admin-access`) |
+| API Engine | `dev-server.js` (in-memory mock APIs) |
+| Deployment | Vercel configuration rewrites API requests to `/api/index.js`, which delegates to the mock API |
+| Auth (demo) | Mock endpoint returns a fixed token; not suitable for access control |
 
-### Production Backend (Go)
+### Go services
 
 | Component | Technology |
 |---|---|
-| Framework | `gin` v1.9.1 |
-| Database | PostgreSQL (`lib/pq` v1.10.9) + Row Level Security |
-| Cache | Redis |
-| Auth | Keycloak + JWT (`golang-jwt` v5.2.1) |
-| Cloud SDK | AWS SDK v2 (ACM, EKS, IAM, ALB, Secrets Manager) |
-| Logging | `go.uber.org/zap` |
-| CLI | Cobra + Viper |
-| Cryptography | `golang.org/x/crypto` |
-| Identity | UUID (`github.com/google/uuid`) |
+| Modules | SaaS control plane, satellite gateway, and vSatellite; each has its own `go.mod` |
+| Go version | Modules declare Go 1.26.0; CI and the latest local verification use Go 1.27.3 |
+| Dependencies | PostgreSQL driver, JWT, AWS SDK, Gin, Cobra, Viper, Zap, and crypto libraries as applicable per module |
+| Database isolation | PostgreSQL Row Level Security on covered tenant-owned tables; see the verification caveats in [Security Architecture](#14-security-architecture) |
 
 ### Infrastructure
+
+The repository includes deployment templates; their presence does not indicate
+that a cloud account, cluster, observability stack, or provider integration has
+been provisioned or validated.
 
 | Component | Technology |
 |---|---|
@@ -566,7 +607,7 @@ Navigate to **Contracts Repository** to see all 15 contracts:
 
 ```
 CLM/
-├── dev-server.js                    # Unified demo server (87 API routes)
+├── dev-server.js                    # Local in-memory mock server (ports 3000 and 8080)
 ├── api/
 │   └── index.js                     # Vercel serverless function bridge
 ├── public/
@@ -578,7 +619,7 @@ CLM/
 ├── components/
 │   ├── saas-control-plane/          # Go backend: SaaS orchestration
 │   │   ├── internal/
-│   │   │   ├── api/                 # REST + gRPC handlers
+│   │   │   ├── api/                 # REST API handlers
 │   │   │   ├── core/                # Shared domain interfaces
 │   │   │   ├── saas/                # Domain packages (20 packages)
 │   │   │   │   ├── contract/        # 26-stage contract engine
@@ -593,9 +634,9 @@ CLM/
 │   │   │   │   ├── identity/        # Keycloak IAM
 │   │   │   │   ├── integrations/    # Webhooks, ServiceNow, Slack
 │   │   │   │   └── ...              # 10 more packages
-│   │   │   └── store/               # PostgreSQL + Redis store
+│   │   │   └── store/               # Persistence and repository packages
 │   │   ├── deploy/
-│   │   │   └── migrations/          # 14 PostgreSQL migrations
+│   │   │   └── migrations/          # Numbered application migrations 001–010
 │   │   └── web/admin-portal/        # Compiled admin portal assets
 │   ├── satellite-gateway/           # Go backend: In-VPC gateway
 │   │   └── internal/
@@ -613,7 +654,7 @@ CLM/
 │   ├── terraform/                   # 3 Terraform configs (AWS/Azure/GCP)
 │   └── observability/               # Prometheus + Grafana
 ├── features/                        # 400-feature registry (20 domains)
-├── scripts/                         # 24 test + utility scripts
+├── scripts/                         # Test, demo, and workflow scripts
 │   ├── verify_scenarios_a_to_h.js   # 40 enterprise scenario tests
 │   ├── test_lifecycle_26_stages.js  # 26 lifecycle stage tests
 │   ├── test_400_features.js         # 400 feature smoke tests
@@ -670,27 +711,29 @@ node scripts/health-check.js
 curl https://clm-website-1cc7.vercel.app/api/v1/health
 ```
 
-### Production Mode (requires Go + PostgreSQL)
+### Go services (optional)
 
 ```bash
-# Build Go services
+# Build the Go components using the repository staging helpers
 make -C components/saas-control-plane build
 make -C components/satellite-gateway build
-
-# Apply database migrations
-psql -U clm_app -d clm -f components/saas-control-plane/deploy/migrations/*.sql
-
-# Start with Docker Compose
-docker-compose -f components/saas-control-plane/deploy/docker-compose.yml up
 ```
+
+These commands build the Go components; they do not deploy the services.
+Before starting the SaaS control plane, apply its ordered application
+migrations with `make -C components/saas-control-plane migrate`; the Compose
+stack runs the same migration job before the server. Existing databases without
+migration history require an explicitly validated legacy baseline via
+`make -C components/saas-control-plane migrate-baseline`. Configure Keycloak
+separately. The checked-in Kubernetes and Terraform files are templates, not a
+verified production deployment procedure.
 
 ### Environment Variables
 
-Copy `.env.example` to `.env.local` for configuration:
-
-```bash
-cp .env.example .env.local
-```
+`.env.example` documents sample variables for local tooling and service setup.
+The Node.js mock server does not automatically load `.env.local`; the ordinary
+`npm start` demo uses in-memory data and does not require these settings. The
+optional database-backed demo setup is described by `npm run demo:setup`.
 
 Key variables:
 
@@ -699,7 +742,7 @@ Key variables:
 CLM_DEMO_MODE=true
 
 # Production
-DATABASE_URL=postgresql://clm_app:changeme@localhost:5432/clm
+DATABASE_URL=postgres://<user>:<password>@<host>:5432/<database>?sslmode=require
 REDIS_URL=redis://localhost:6379
 KEYCLOAK_URL=https://auth.enterprise.internal
 KEYCLOAK_REALM=clm
@@ -714,19 +757,15 @@ AWS_REGION=ap-south-1
 ```bash
 # Suite 1: Enterprise Scenarios A through H
 npm test
-# VERIFICATION SUMMARY: 40/40 TESTS PASSED
 
 # Suite 2: 26 Contract Lifecycle Stages
 npm run test:lifecycle
-# LIFECYCLE VERIFICATION SUMMARY: 26/26 Stages Verified (0 Failed)
 
 # Suite 3: 400 Feature Registry
 npm run test:400
-# SUMMARY: 400/400 REGISTRY SMOKE CHECKS PASSED
 
 # Suite 4: Corporate Modules
 npm run test:corporate
-# ALL 10 TEST SUITES (CORPORATE MODULES & FIXES) PASSED OK!
 
 # Additional local suites
 npm run test:workflows
@@ -743,6 +782,20 @@ implemented. These Node checks do not replace Go compilation, PostgreSQL-backed
 integration tests, live identity-provider verification, or deployment validation.
 Scenario C runs in the local demo harness and is not the PostgreSQL RLS test;
 see `DATABASE_VERIFICATION_REPORT.md` for the separate database evidence.
+
+### Latest CI verification
+
+GitHub Actions run
+[42257224350](https://github.com/GOKUL-THAN/clm/actions/runs/42257224350)
+passed all nine jobs on 2026-11-06. In addition to the Go module checks, CI
+applied the numbered migrations to PostgreSQL 15 and ran application-role
+approval and certificate tenant-isolation repository tests, Kubernetes
+configuration assertions, Terraform validation, secret and vulnerability
+scans, and builds/scans of the three container images. CI also uploaded a
+CycloneDX filesystem SBOM and generated its provenance attestation; the
+attestation was verified with GitHub CLI. This is repository/CI evidence, not
+a staging or production deployment, and the attestation does not cover the
+container images.
 
 ### What the Tests Verify
 
@@ -761,22 +814,26 @@ see `DATABASE_VERIFICATION_REPORT.md` for the separate database evidence.
 
 ## 14. Security Architecture
 
-### Zero-Trust Model
+### Security design and verification scope
 
-- **No private keys in SaaS** — All cryptographic operations stay inside the satellite gateway
-- **mTLS** — All gateway-to-SaaS communication uses mutual TLS
-- **Tenant RLS** — Forced PostgreSQL Row Level Security on covered tenant-owned tables. Migrations 001–010 and the application-role/table-owner SQL suites passed on a disposable PostgreSQL 18.6 database; the Go application's runtime connection and repository tests remain unverified.
-- **JWT validation** — Every API request requires a valid JWT
-- **Fail-closed** — Expired policy, invalid identity → block, never fallback to insecure default
+- **Private-key isolation** — The architecture is intended to keep customer private-key operations inside the gateway; deployment and key-custody controls require environment-level verification.
+- **mTLS** — Gateway-to-SaaS mutual TLS is an intended transport control; live end-to-end deployment verification is outstanding.
+- **Tenant RLS** — Forced PostgreSQL Row Level Security is configured for covered tenant-owned tables. Migrations 001–010 and application-role/table-owner SQL suites passed on a disposable PostgreSQL 18.6 database. CI also passed on PostgreSQL 15, including app-role approval and certificate tenant-isolation repository tests. These results do not cover every repository or prove behavior in a deployed application.
+- **JWT validation** — Go identity components include JWT validation; end-to-end authentication enforcement in a deployed service remains unverified. The Node demo uses mock auth.
+- **Kubernetes workload identity** — The control-plane and gateway use dedicated ServiceAccounts with automatic Kubernetes API-token mounting disabled. No Kubernetes `Role` or `RoleBinding` is configured because the checked-in Go workloads do not use the Kubernetes API; cloud IAM/workload identity still requires environment-specific configuration and testing.
+- **Fail-closed behavior** — Required controls must be tested in each configured deployment; the mock demo does not establish this property.
 
 ### Compliance
 
+These are areas the project may map controls to; this table is not evidence of
+an independent audit, certification, or complete regulatory compliance.
+
 | Framework | Coverage |
 |---|---|
-| GDPR | Data subject rights, retention, breach notification |
-| PCI-DSS v4 | Cardholder data protection, certificate standards |
-| SOC 2 Type II | Availability, confidentiality, security controls |
-| HIPAA | PHI technical safeguards |
+| GDPR | Control areas to assess: data subject rights, retention, breach notification |
+| PCI-DSS v4 | Control areas to assess where applicable; no compliance assessment is claimed |
+| SOC 2 Type II | Control areas to assess; no SOC 2 audit or attestation is claimed |
+| HIPAA | Control areas to assess where applicable; no HIPAA certification is claimed |
 
 ### Multi-Tenant Isolation
 
@@ -802,7 +859,14 @@ Tenant B ──── tenant_id = "tenant-B" ──── [RLS Policy] ───
 
 ## 15. 400 Enterprise Features
 
-The platform covers 400 enterprise CLM features across 20 operational domains:
+The feature registry lists 400 entries across 20 operational domains. Registry
+entries and smoke checks are a catalog, not proof that each capability is
+implemented, integrated, or independently tested.
+
+The registry verification checks module metadata and validation before
+dispatching to domain-level smoke simulations; it does not execute each
+feature module's business behavior. No feature-by-feature implementation or
+acceptance audit is established by `npm run test:400`.
 
 | Domain | Features | Description |
 |---|---|---|
@@ -831,36 +895,37 @@ The platform covers 400 enterprise CLM features across 20 operational domains:
 
 ## 16. Production Requirements
 
-To run this platform in production, you need:
+Production requirements depend on which Go services and integrations you enable.
+The table lists possible dependencies, not components that have all been
+provisioned or verified:
 
 | Requirement | Purpose | Notes |
 |---|---|---|
-| Go 1.27.3 toolchain | Current CI and verified build toolchain; modules declare Go 1.26.0 | 20 backend packages |
-| PostgreSQL 14+ | Persistent data store | 14 migrations ready |
-| Redis | Session cache, queue | Any Redis-compatible |
-| Keycloak 22+ | Enterprise SSO | OIDC + SAML |
-| AWS Account | ACM, EKS, Secrets Manager | Terraform ready |
-| Docker + Kubernetes | Container orchestration | K8s manifests in `deploy/k8s/` |
-| HSM / Vault | Private key custody | In-VPC only |
-| SMTP Service | Email notifications | Approval alerts |
-| S3-compatible store | Document storage | Contract PDFs |
-| AI/LLM API | Contract intelligence | Pluggable |
+| Go 1.27.3 toolchain | CI and current local validation; modules declare Go 1.26.0 | Required to build Go services |
+| PostgreSQL | SaaS persistence | Apply numbered migrations 001–010; Keycloak bootstrap is a separate database concern |
+| Keycloak / OIDC | Production identity integration | Configure issuer, clients, keys, and policies before exposure |
+| Cloud / CA accounts | Provider-specific functions | Only for integrations enabled and configured in the selected environment |
+| Docker / Kubernetes / Terraform | Deployment options | Templates require environment-specific review and validation |
+| HSM, Vault, mail, object storage, AI service | Optional integrations | Use only where required by the deployment design; not configured by the demo |
 
 ---
 
 ## 17. Demo vs Production
 
-| Feature | Demo Mode | Production |
+Production column values below describe intended integration options, not verified
+production capabilities. The Go services require their own configuration and
+integration tests; the Node.js mock remains separate.
+
+| Feature | Node.js demo | Go services / production deployment |
 |---|---|---|
-| Data persistence | In-memory (resets on restart) | PostgreSQL + S3 |
-| Authentication | Mock JWT (any creds work) | Keycloak OIDC |
-| Signatures | Simulated hash | Real X.509 PKI |
-| AI responses | Hardcoded mock answers | Real LLM API |
-| Cloud connectivity | Mocked SDK calls | Real AWS/GCP |
-| Certificate issuance | Mock order simulation | Real CA API calls |
-| Email notifications | Not sent | SMTP delivery |
-| Multi-tenant isolation | Simulated (BOLA test) | PostgreSQL RLS |
-| Startup | `node dev-server.js` (< 2s) | Docker Compose + K8s |
+| Data persistence | In-memory fixture data; resets on restart | PostgreSQL repositories exist; external storage depends on configuration |
+| Authentication | Mock endpoint returns a fixed token | JWT/Keycloak integrations require deployment configuration and validation |
+| Signatures | Demo UI/mock behavior | Cryptographic packages exist; PKI/HSM and legal compliance are not certified here |
+| AI responses | Mock/demo responses | External AI integration requires configuration and safety validation |
+| Cloud connectivity | Mock responses | Provider SDK adapters require credentials and live integration tests |
+| Certificate issuance | Mock order flow | CA adapters require account configuration and CA-side testing |
+| vSatellite certificate deployment | Not performed | Disabled at the gateway command endpoint pending tenant authorization and authenticated transport |
+| Startup | `npm start` (local mock server) | Deployment templates require environment-specific implementation |
 
 ---
 

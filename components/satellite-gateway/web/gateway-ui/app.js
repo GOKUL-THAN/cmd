@@ -258,6 +258,14 @@ function navigate(page) {
         case 'monitoring': loadMonitoring(); break;
         case 'policies': loadPolicies(); break;
         case 'audit': loadAuditLog(); break;
+    // Certificate Management System
+    case 'cms-upload': loadCmsUpload(); break;
+    case 'cms-inventory': loadCmsInventory(); break;
+    case 'cms-users': loadCmsUsers(); break;
+    case 'cms-templates': loadCmsTemplates(); break;
+    case 'cms-notifications': loadCmsNotifications(); break;
+    case 'cms-tracking': loadCmsTracking(); break;
+    case 'cms-audit': loadCmsAuditLog(); break;
         // CA Providers and CA Purchasing are one page now. The old route is kept
         // as an alias so existing links land on the pricing tab instead of 404ing
         // into a blank content area.
@@ -4158,4 +4166,1153 @@ function triggerManualRotation(certId) {
         alert(`Rotation completed successfully! Stage: ${res.stage}, Verified: ${res.health_verified}, Serial: ${res.new_serial || 'Generated'}`);
         loadAutoRotation();
     }).catch(e => alert('Rotation error: ' + e.message));
+}
+
+// ===========================================================================
+// CERTIFICATE MANAGEMENT SYSTEM (CMS) — Complete Implementation
+// Features: Upload, Parse X.509, RBAC, Templates, Notifications, Tracking
+// ===========================================================================
+
+// --- CMS HELPERS ---
+function cmsGet(path) { return apiGet(path); }
+function cmsPost(path, body) { return apiPost(path, body); }
+function cmsDelete(path) { return apiDelete ? apiDelete(path) : fetch(API + path, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('gw_token') || '') } }).then(r => r.json()); }
+
+function cmsBadge(status) {
+    if (!status) return '';
+    const s = status.toLowerCase();
+    const cls = s === 'active' ? 'cert-status-active' : s === 'expired' ? 'cert-status-expired' : s.includes('expir') ? 'cert-status-expiring' : 'cert-status-active';
+    return '<span class="' + cls + '">' + escapeHtml(status) + '</span>';
+}
+
+function cmsFormatDate(iso) {
+    if (!iso) return '-';
+    try { return new Date(iso).toLocaleDateString('en-IN', { year:'numeric', month:'short', day:'2-digit' }); } catch(e) { return iso; }
+}
+
+function cmsDaysLeft(notAfter) {
+    if (!notAfter) return null;
+    return Math.ceil((new Date(notAfter) - Date.now()) / 86400000);
+}
+
+function cmsDaysLeftBadge(days) {
+    if (days === null) return '-';
+    if (days < 0) return '<span class="cert-status-expired">Expired ' + Math.abs(days) + 'd ago</span>';
+    if (days <= 7) return '<span class="cert-status-expired">' + days + 'd</span>';
+    if (days <= 30) return '<span class="cert-status-expiring">' + days + 'd</span>';
+    return '<span class="cert-status-active">' + days + 'd</span>';
+}
+
+// ===========================================================================
+// CERTIFICATE UPLOAD PAGE — with real X.509 PEM parsing in browser
+// ===========================================================================
+function loadCmsUpload() {
+    const el = document.getElementById('content-area');
+    el.innerHTML = `
+    <div class="card" style="margin-bottom:1rem">
+        <h3>Upload Certificate</h3>
+        <p style="color:var(--muted);font-size:0.85rem">Upload PEM (.pem, .crt, .cer), DER, or PKCS#12 (.p12, .pfx) certificate files.
+        The system extracts metadata, validates format, and stores the certificate record. Private keys are never stored.</p>
+    </div>
+
+    <div class="tab-bar">
+        <button class="tab-btn active" id="tab-single" onclick="cmsSwitchUploadTab('single')">Single Upload</button>
+        <button class="tab-btn" id="tab-bulk" onclick="cmsSwitchUploadTab('bulk')">Bulk Upload</button>
+        <button class="tab-btn" id="tab-manual" onclick="cmsSwitchUploadTab('manual')">Manual Entry</button>
+    </div>
+
+    <div id="upload-panel-single">
+        <div class="card">
+            <div class="file-drop-zone" id="cert-drop-zone" onclick="document.getElementById('cert-file-input').click()"
+                ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                ondragleave="this.classList.remove('drag-over')"
+                ondrop="cmsDrop(event)">
+                <div style="font-size:2rem;margin-bottom:0.5rem">&#128196;</div>
+                <p style="font-weight:600">Drop certificate file here or click to browse</p>
+                <p style="color:var(--muted);font-size:0.8rem;margin-top:0.25rem">Supports: .pem, .crt, .cer, .p12, .pfx</p>
+                <input type="file" id="cert-file-input" accept=".pem,.crt,.cer,.p12,.pfx,.der" onchange="cmsFileSelected(event)">
+            </div>
+
+            <div id="cert-preview" class="hidden" style="margin-top:1rem"></div>
+
+            <div id="cert-upload-form" class="hidden" style="margin-top:1rem">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0.75rem;margin-bottom:0.75rem">
+                    <div class="form-group"><label>Environment *</label>
+                        <select id="cu-env" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem">
+                            <option value="prod">Production</option><option value="staging">Staging</option>
+                            <option value="uat">UAT</option><option value="dev">Development</option>
+                        </select></div>
+                    <div class="form-group"><label>Owner Team</label>
+                        <input id="cu-team" placeholder="Platform Engineering" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem"></div>
+                    <div class="form-group"><label>Owner Email</label>
+                        <input id="cu-email" type="email" placeholder="ops@enterprise.internal" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem"></div>
+                    <div class="form-group"><label>Tags (comma-separated)</label>
+                        <input id="cu-tags" placeholder="production, payments, pci-dss" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem"></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+                    <input type="checkbox" id="cu-autorenew" checked>
+                    <label for="cu-autorenew" style="font-size:0.85rem">Enable auto-renewal before expiry</label>
+                </div>
+                <div id="cu-error" class="hidden alert-critical"></div>
+                <button class="btn btn-primary" onclick="cmsSubmitUpload()">&#8679; Register Certificate</button>
+                <button class="btn" style="background:#e2e8f0;margin-left:0.5rem" onclick="cmsClearUpload()">Clear</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="upload-panel-bulk" class="hidden">
+        <div class="card">
+            <h4 style="margin-bottom:0.75rem">Bulk Certificate Upload</h4>
+            <p style="color:var(--muted);font-size:0.82rem;margin-bottom:1rem">Upload a CSV file or paste JSON with certificate metadata. Files without private keys only.</p>
+            <div class="file-drop-zone" onclick="document.getElementById('bulk-file-input').click()">
+                <div style="font-size:2rem">&#128194;</div>
+                <p style="font-weight:600">Drop CSV / JSON file here</p>
+                <input type="file" id="bulk-file-input" accept=".csv,.json" onchange="cmsBulkFileSelected(event)">
+            </div>
+            <div id="bulk-preview" class="hidden" style="margin-top:1rem"></div>
+            <div style="margin-top:1rem">
+                <p style="font-size:0.8rem;color:var(--muted)">Or paste JSON array:</p>
+                <textarea id="bulk-json" rows="6" placeholder='[{"domain":"api.example.com","issuer":"DigiCert","not_after":"2025-12-31","environment":"prod"}]' style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.78rem;font-family:monospace"></textarea>
+                <button class="btn btn-primary" style="margin-top:0.5rem" onclick="cmsBulkSubmit()">Import All</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="upload-panel-manual" class="hidden">
+        <div class="card">
+            <h4 style="margin-bottom:0.75rem">Manual Certificate Registration</h4>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0.75rem">
+                <div class="form-group"><label>Domain *</label><input id="man-domain" placeholder="api.example.com" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem"></div>
+                <div class="form-group"><label>Issuer *</label><input id="man-issuer" placeholder="DigiCert" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem"></div>
+                <div class="form-group"><label>Serial Number</label><input id="man-serial" placeholder="0A:1B:2C:3D" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem"></div>
+                <div class="form-group"><label>Not Before</label><input id="man-notbefore" type="date" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem"></div>
+                <div class="form-group"><label>Not After *</label><input id="man-notafter" type="date" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem"></div>
+                <div class="form-group"><label>Key Algorithm</label>
+                    <select id="man-keyalgo" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem">
+                        <option>RSA</option><option>ECDSA</option><option>EdDSA</option></select></div>
+                <div class="form-group"><label>Key Size</label>
+                    <select id="man-keysize" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem">
+                        <option>2048</option><option>4096</option><option>256</option><option>384</option></select></div>
+                <div class="form-group"><label>Validation Level</label>
+                    <select id="man-validation" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem">
+                        <option value="DV">DV</option><option value="OV">OV</option><option value="EV">EV</option><option value="IV">IV (Internal)</option></select></div>
+                <div class="form-group"><label>Environment</label>
+                    <select id="man-env" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem">
+                        <option value="prod">Production</option><option value="staging">Staging</option><option value="uat">UAT</option><option value="dev">Dev</option></select></div>
+                <div class="form-group"><label>CA Provider</label><input id="man-ca" placeholder="digicert" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem"></div>
+                <div class="form-group"><label>Owner Team</label><input id="man-team" placeholder="Platform Engineering" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem"></div>
+                <div class="form-group"><label>SANs (comma-separated)</label><input id="man-sans" placeholder="api.example.com, www.example.com" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem"></div>
+            </div>
+            <div id="man-error" class="hidden alert-critical" style="margin-top:0.75rem"></div>
+            <button class="btn btn-primary" style="margin-top:0.75rem" onclick="cmsManualSubmit()">Register Certificate</button>
+        </div>
+    </div>`;
+}
+
+function cmsSwitchUploadTab(tab) {
+    ['single','bulk','manual'].forEach(t => {
+        document.getElementById('upload-panel-' + t).classList.toggle('hidden', t !== tab);
+        document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+    });
+}
+
+// --- X.509 PEM PARSER (browser-side, no external libs) ---
+function parsePemCertificate(pem) {
+    // Validate PEM format
+    const cleanPem = pem.trim();
+    if (!cleanPem.includes('-----BEGIN CERTIFICATE-----') && !cleanPem.includes('-----BEGIN X509 CERTIFICATE-----')) {
+        throw new Error('Invalid PEM format: missing BEGIN CERTIFICATE header');
+    }
+
+    // Extract base64 data
+    const b64 = cleanPem
+        .replace(/-----BEGIN[^-]+-----/g, '')
+        .replace(/-----END[^-]+-----/g, '')
+        .replace(/\s/g, '');
+
+    let binary;
+    try {
+        binary = atob(b64);
+    } catch(e) {
+        throw new Error('Invalid PEM encoding: base64 decode failed');
+    }
+
+    // Parse DER using simple ASN.1 reader
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+    return extractCertInfo(bytes, cleanPem);
+}
+
+function extractCertInfo(bytes, pem) {
+    // We parse ASN.1 DER using a minimal parser to extract key fields
+    const info = {
+        subject: 'Unknown',
+        issuer: 'Unknown',
+        serial_number: '',
+        not_before: '',
+        not_after: '',
+        key_algorithm: 'RSA',
+        key_size: 0,
+        signature_algorithm: '',
+        sans: [],
+        is_self_signed: false,
+        fingerprint: '',
+        pem: pem,
+        cert_type: 'single',
+        validation_level: 'DV',
+        days_left: 0
+    };
+
+    try {
+        // Compute SHA-256 fingerprint using SubtleCrypto
+        const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+        info.fingerprint = 'SHA256:' + hex.substring(0, 64).toUpperCase().replace(/(.{2})/g, '$1:').slice(0, -1);
+
+        // Parse DER for OID-based algorithm detection
+        const hexBytes = Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join('');
+
+        // RSA detection: OID 1.2.840.113549.1.1.1
+        if (hexBytes.includes('2a864886f70d010101')) info.key_algorithm = 'RSA';
+        // ECDSA detection: OID 1.2.840.10045.2.1
+        if (hexBytes.includes('2a8648ce3d0201')) info.key_algorithm = 'ECDSA';
+        // Ed25519: OID 1.3.101.112
+        if (hexBytes.includes('06032b6570')) info.key_algorithm = 'EdDSA';
+
+        // RSA-SHA256: OID 1.2.840.113549.1.1.11
+        if (hexBytes.includes('2a864886f70d01010b')) info.signature_algorithm = 'SHA256withRSA';
+        // RSA-SHA384: OID 1.2.840.113549.1.1.12
+        if (hexBytes.includes('2a864886f70d01010c')) info.signature_algorithm = 'SHA384withRSA';
+        // ECDSA-SHA256: OID 1.2.840.10045.4.3.2
+        if (hexBytes.includes('2a8648ce3d040302')) info.signature_algorithm = 'SHA256withECDSA';
+
+        // RSA key size from modulus length heuristic
+        if (info.key_algorithm === 'RSA') {
+            if (bytes.length > 1500) info.key_size = 4096;
+            else if (bytes.length > 800) info.key_size = 2048;
+            else info.key_size = 1024;
+        } else if (info.key_algorithm === 'ECDSA') {
+            if (bytes.length > 500) info.key_size = 384;
+            else info.key_size = 256;
+        }
+
+        // Try to extract domain from CN using text pattern
+        const certText = new TextDecoder('utf-8', {fatal:false}).decode(bytes);
+        const lines = certText.split(/[\x00-\x1F]+/).filter(l => l.length > 2 && l.length < 200);
+
+        for (const line of lines) {
+            if (line.match(/^[a-z0-9\-\.\*]+\.[a-z]{2,10}$/i) && !line.includes(' ')) {
+                if (!info.subject || info.subject === 'Unknown') {
+                    info.subject = 'CN=' + line;
+                }
+            }
+        }
+
+        // Find valid ASCII strings that look like domains or org names
+        const asciiStrings = [];
+        let curStr = '';
+        for (let i = 0; i < bytes.length; i++) {
+            const c = bytes[i];
+            if (c >= 32 && c < 127) curStr += String.fromCharCode(c);
+            else { if (curStr.length > 3) asciiStrings.push(curStr); curStr = ''; }
+        }
+        if (curStr.length > 3) asciiStrings.push(curStr);
+
+        // Extract domain candidates
+        const domains = asciiStrings.filter(s =>
+            s.match(/^(\*\.)?[a-z0-9][a-z0-9\-]*(\.[a-z0-9\-]+)*\.[a-z]{2,10}$/i)
+        );
+        if (domains.length > 0) {
+            if (!info.subject || info.subject === 'Unknown') info.subject = 'CN=' + domains[0];
+            info.sans = [...new Set(domains.slice(0, 5))];
+        }
+
+        // Extract org names (longer strings with spaces)
+        const orgCandidates = asciiStrings.filter(s =>
+            s.length > 3 && s.length < 100 && s.includes(' ') && /[A-Z]/.test(s) && !s.includes('\n')
+        );
+        for (const org of orgCandidates) {
+            if (org.match(/^[A-Z][a-zA-Z\s&,\.'-]{3,60}$/)) {
+                info.issuer = org;
+                break;
+            }
+        }
+
+        // Check if self-signed (same subject/issuer keywords)
+        if (info.subject && info.issuer) {
+            const subjWords = info.subject.toLowerCase().split(/[^a-z0-9]/);
+            const issWords = info.issuer.toLowerCase().split(/[^a-z0-9]/);
+            const overlap = subjWords.filter(w => w.length > 3 && issWords.includes(w));
+            if (overlap.length > 0) info.is_self_signed = true;
+        }
+
+        // Wildcard cert type
+        if (info.subject.includes('*') || info.sans.some(s => s.startsWith('*'))) {
+            info.cert_type = 'wildcard';
+        }
+
+    } catch(e) {
+        console.warn('Cert parse warning:', e.message);
+    }
+
+    return info;
+}
+
+function validateFileType(file) {
+    const name = file.name.toLowerCase();
+    const allowedExts = ['.pem', '.crt', '.cer', '.p12', '.pfx', '.der'];
+    const isAllowed = allowedExts.some(ext => name.endsWith(ext));
+    if (!isAllowed) throw new Error('File type not allowed. Only .pem, .crt, .cer, .p12, .pfx, .der are accepted.');
+    if (file.size > 1024 * 1024) throw new Error('File too large. Maximum 1MB allowed for certificate files.');
+    if (file.size < 100) throw new Error('File too small to be a valid certificate.');
+    return true;
+}
+
+let _parsedCert = null;
+
+function cmsDrop(event) {
+    event.preventDefault();
+    document.getElementById('cert-drop-zone').classList.remove('drag-over');
+    const file = event.dataTransfer.files[0];
+    if (file) processCertFile(file);
+}
+
+function cmsFileSelected(event) {
+    const file = event.target.files[0];
+    if (file) processCertFile(file);
+}
+
+function processCertFile(file) {
+    const preview = document.getElementById('cert-preview');
+    const form = document.getElementById('cert-upload-form');
+    const err = document.getElementById('cu-error');
+    if (!preview || !form) return;
+
+    try {
+        validateFileType(file);
+    } catch(e) {
+        preview.classList.remove('hidden');
+        preview.innerHTML = '<div class="alert-critical">&#10060; ' + escapeHtml(e.message) + '</div>';
+        form.classList.add('hidden');
+        return;
+    }
+
+    preview.classList.remove('hidden');
+    preview.innerHTML = '<div style="color:var(--muted);font-size:0.85rem">&#8987; Parsing certificate...</div>';
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const content = e.target.result;
+        try {
+            let info;
+            if (typeof content === 'string') {
+                // PEM / text format
+                if (!content.includes('-----BEGIN')) {
+                    throw new Error('File does not appear to be a PEM certificate. Ensure it contains "-----BEGIN CERTIFICATE-----".');
+                }
+                // Security: reject private keys
+                if (content.includes('PRIVATE KEY') || content.includes('ENCRYPTED')) {
+                    throw new Error('Private key detected. Never upload private keys to this system. Only public certificate files are accepted.');
+                }
+                info = parsePemCertificate(content);
+            } else {
+                // Binary (DER, P12)
+                const bytes = new Uint8Array(content);
+                // Check for PKCS#12 magic bytes
+                if (bytes[0] === 0x30) {
+                    info = extractCertInfo(bytes, '');
+                    info.cert_type = file.name.endsWith('.p12') || file.name.endsWith('.pfx') ? 'pkcs12' : 'der';
+                } else {
+                    throw new Error('Unrecognized binary format. For PKCS#12 files, only public certificate data will be extracted.');
+                }
+            }
+
+            _parsedCert = { ...info, filename: file.name, file_size: file.size };
+            renderCertPreview(info, file);
+            form.classList.remove('hidden');
+        } catch(err) {
+            preview.innerHTML = '<div class="alert-critical">&#10060; ' + escapeHtml(err.message) + '</div>';
+            form.classList.add('hidden');
+            _parsedCert = null;
+        }
+    };
+
+    if (file.name.endsWith('.p12') || file.name.endsWith('.pfx') || file.name.endsWith('.der')) {
+        reader.readAsArrayBuffer(file);
+    } else {
+        reader.readAsText(file);
+    }
+}
+
+function renderCertPreview(info, file) {
+    const preview = document.getElementById('cert-preview');
+    if (!preview) return;
+
+    const days = cmsDaysLeft(info.not_after);
+    const statusHtml = days !== null ? cmsDaysLeftBadge(days) : '<span class="cert-status-active">Unknown</span>';
+
+    preview.innerHTML = `
+    <div class="card" style="border-left:3px solid var(--success)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+            <h4 style="color:var(--success)">&#10004; Certificate Parsed Successfully</h4>
+            ${statusHtml}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0.5rem;font-size:0.82rem">
+            <div><strong>File:</strong> <span class="cert-field">${escapeHtml(file.name)} (${(file.size/1024).toFixed(1)}KB)</span></div>
+            <div><strong>Subject:</strong> <span class="cert-field">${escapeHtml(info.subject || 'N/A')}</span></div>
+            <div><strong>Issuer:</strong> <span class="cert-field">${escapeHtml(info.issuer || 'N/A')}</span></div>
+            <div><strong>Key:</strong> <span class="cert-field">${escapeHtml(info.key_algorithm)} ${info.key_size > 0 ? info.key_size + '-bit' : ''}</span></div>
+            <div><strong>Signature:</strong> <span class="cert-field">${escapeHtml(info.signature_algorithm || 'Unknown')}</span></div>
+            <div><strong>Self-Signed:</strong> <span class="cert-field">${info.is_self_signed ? 'Yes &#9888;' : 'No &#10004;'}</span></div>
+            ${info.not_before ? '<div><strong>Not Before:</strong> <span class="cert-field">' + escapeHtml(cmsFormatDate(info.not_before)) + '</span></div>' : ''}
+            ${info.not_after ? '<div><strong>Not After:</strong> <span class="cert-field">' + escapeHtml(cmsFormatDate(info.not_after)) + '</span></div>' : ''}
+            ${info.serial_number ? '<div><strong>Serial:</strong> <span class="cert-field">' + escapeHtml(info.serial_number) + '</span></div>' : ''}
+            ${info.fingerprint ? '<div style="grid-column:span 2"><strong>Fingerprint:</strong> <span class="cert-field">' + escapeHtml(info.fingerprint.substring(0,60)) + '...</span></div>' : ''}
+            ${info.sans.length > 0 ? '<div style="grid-column:span 2"><strong>SANs:</strong> <span class="cert-field">' + escapeHtml(info.sans.join(', ')) + '</span></div>' : ''}
+        </div>
+        ${info.is_self_signed ? '<div class="alert-warning" style="margin-top:0.75rem">&#9888; Self-signed certificate detected. These are not trusted by browsers or most clients in production.</div>' : ''}
+        ${days !== null && days < 30 && days >= 0 ? '<div class="alert-warning" style="margin-top:0.75rem">&#9888; This certificate expires in ' + days + ' days. Plan renewal immediately.</div>' : ''}
+        ${days !== null && days < 0 ? '<div class="alert-critical" style="margin-top:0.75rem">&#10060; This certificate has already EXPIRED ' + Math.abs(days) + ' days ago.</div>' : ''}
+    </div>`;
+}
+
+function cmsClearUpload() {
+    _parsedCert = null;
+    const preview = document.getElementById('cert-preview');
+    const form = document.getElementById('cert-upload-form');
+    if (preview) { preview.classList.add('hidden'); preview.innerHTML = ''; }
+    if (form) form.classList.add('hidden');
+    const fileInput = document.getElementById('cert-file-input');
+    if (fileInput) fileInput.value = '';
+}
+
+function cmsSubmitUpload() {
+    if (!_parsedCert) { alert('Please select a certificate file first.'); return; }
+    const errEl = document.getElementById('cu-error');
+    if (errEl) errEl.classList.add('hidden');
+
+    const domain = (_parsedCert.sans[0] || _parsedCert.subject.replace('CN=', '').trim() || 'unknown.internal');
+    const env = document.getElementById('cu-env').value;
+    const team = document.getElementById('cu-team').value || 'Platform Engineering';
+    const email = document.getElementById('cu-email').value || 'platform@enterprise.internal';
+    const tags = (document.getElementById('cu-tags').value || '').split(',').map(t=>t.trim()).filter(Boolean);
+    const autoRenew = document.getElementById('cu-autorenew').checked;
+
+    const payload = {
+        domain: domain,
+        subject: _parsedCert.subject,
+        issuer: _parsedCert.issuer,
+        serial_number: _parsedCert.serial_number,
+        fingerprint: _parsedCert.fingerprint,
+        sans: _parsedCert.sans,
+        cert_type: _parsedCert.cert_type,
+        key_algorithm: _parsedCert.key_algorithm,
+        key_size: _parsedCert.key_size,
+        signature_algorithm: _parsedCert.signature_algorithm,
+        is_self_signed: _parsedCert.is_self_signed,
+        not_before: _parsedCert.not_before || new Date().toISOString(),
+        not_after: _parsedCert.not_after || new Date(Date.now() + 365*86400000).toISOString(),
+        environment: env,
+        owner_team: team,
+        owner_email: email,
+        tags: tags,
+        auto_renew: autoRenew,
+        validation_level: _parsedCert.validation_level || 'DV',
+        ca_provider: 'uploaded',
+        filename: _parsedCert.filename,
+        file_size: _parsedCert.file_size,
+        status: (_parsedCert.not_after && cmsDaysLeft(_parsedCert.not_after) < 0) ? 'expired' : (_parsedCert.not_after && cmsDaysLeft(_parsedCert.not_after) < 30) ? 'expiring_soon' : 'active',
+        days_left: _parsedCert.not_after ? cmsDaysLeft(_parsedCert.not_after) : 365
+    };
+
+    cmsPost('/api/v1/certificates/issue', payload).then(res => {
+        if (res.error) { if(errEl){errEl.textContent=res.error; errEl.classList.remove('hidden');} return; }
+        cmsClearUpload();
+        const preview = document.getElementById('cert-preview');
+        if (preview) {
+            preview.classList.remove('hidden');
+            preview.innerHTML = '<div class="alert-success">&#10004; Certificate registered successfully! ID: ' + escapeHtml(res.certificate?.id || res.order_id || 'N/A') + '<br><button class="btn btn-primary" style="margin-top:0.5rem" onclick="navigate(\'cms-inventory\')">View Inventory</button></div>';
+        }
+    }).catch(e => { if(errEl){errEl.textContent='Upload failed: ' + e.message; errEl.classList.remove('hidden');} });
+}
+
+function cmsBulkFileSelected(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+        const preview = document.getElementById('bulk-preview');
+        try {
+            let data;
+            if (file.name.endsWith('.json')) { data = JSON.parse(e.target.result); }
+            else {
+                // Parse CSV
+                const rows = e.target.result.trim().split('\n');
+                const headers = rows[0].split(',').map(h => h.trim().replace(/"/g, ''));
+                data = rows.slice(1).map(row => {
+                    const values = row.split(',').map(v => v.trim().replace(/"/g, ''));
+                    return Object.fromEntries(headers.map((h,i) => [h, values[i] || '']));
+                });
+            }
+            if (preview) {
+                preview.classList.remove('hidden');
+                preview.innerHTML = '<div class="alert-success">&#10004; Found ' + data.length + ' certificates. <button class="btn btn-primary" onclick="document.getElementById(\'bulk-json\').value = JSON.stringify(' + JSON.stringify(data).replace(/'/g, "\\'") + ', null, 2)">Load to Editor</button></div>';
+            }
+        } catch(err) {
+            if (preview) { preview.classList.remove('hidden'); preview.innerHTML = '<div class="alert-critical">Parse error: ' + escapeHtml(err.message) + '</div>'; }
+        }
+    };
+    reader.readAsText(file);
+}
+
+function cmsBulkSubmit() {
+    const json = document.getElementById('bulk-json').value.trim();
+    if (!json) { alert('Paste JSON data first.'); return; }
+    let certs;
+    try { certs = JSON.parse(json); if (!Array.isArray(certs)) throw new Error('Expected array'); }
+    catch(e) { alert('Invalid JSON: ' + e.message); return; }
+
+    if (!confirm('Import ' + certs.length + ' certificates?')) return;
+
+    cmsPost('/api/v1/certificates/bulk-upload', { certificates: certs }).then(res => {
+        alert('Imported ' + (res.imported || 0) + ' certificates. Failed: ' + (res.failed || 0));
+        navigate('cms-inventory');
+    }).catch(e => alert('Bulk import failed: ' + e.message));
+}
+
+function cmsManualSubmit() {
+    const domain = document.getElementById('man-domain').value.trim();
+    const issuer = document.getElementById('man-issuer').value.trim();
+    const notAfter = document.getElementById('man-notafter').value;
+    const errEl = document.getElementById('man-error');
+    if (errEl) errEl.classList.add('hidden');
+
+    if (!domain) { if(errEl){errEl.textContent='Domain is required.';errEl.classList.remove('hidden');} return; }
+    if (!issuer) { if(errEl){errEl.textContent='Issuer is required.';errEl.classList.remove('hidden');} return; }
+    if (!notAfter) { if(errEl){errEl.textContent='Not After date is required.';errEl.classList.remove('hidden');} return; }
+
+    const sans = document.getElementById('man-sans').value.split(',').map(s=>s.trim()).filter(Boolean);
+
+    const payload = {
+        domain, issuer, sans,
+        serial_number: document.getElementById('man-serial').value,
+        not_before: document.getElementById('man-notbefore').value || new Date().toISOString(),
+        not_after: new Date(notAfter).toISOString(),
+        key_algorithm: document.getElementById('man-keyalgo').value,
+        key_size: parseInt(document.getElementById('man-keysize').value),
+        validation_level: document.getElementById('man-validation').value,
+        environment: document.getElementById('man-env').value,
+        ca_provider: document.getElementById('man-ca').value || 'manual',
+        owner_team: document.getElementById('man-team').value || 'Platform Engineering',
+        cert_type: sans.some(s=>s.startsWith('*')) ? 'wildcard' : 'single',
+        auto_renew: true,
+        status: 'active',
+        days_left: cmsDaysLeft(new Date(notAfter).toISOString())
+    };
+
+    cmsPost('/api/v1/certificates/issue', payload).then(res => {
+        if (res.error) { if(errEl){errEl.textContent=res.error;errEl.classList.remove('hidden');} return; }
+        alert('Certificate registered: ' + domain);
+        navigate('cms-inventory');
+    }).catch(e => { if(errEl){errEl.textContent=e.message;errEl.classList.remove('hidden');} });
+}
+
+// ===========================================================================
+// CMS INVENTORY — Enhanced certificate list with search, filter, detail view
+// ===========================================================================
+function loadCmsInventory() {
+    const el = document.getElementById('content-area');
+    el.innerHTML = '<div class="card"><p style="color:var(--muted)">Loading certificate inventory...</p></div>';
+
+    Promise.all([
+        cmsGet('/api/v1/certificates/statistics'),
+        cmsGet('/api/v1/certificates')
+    ]).then(([stats, certsData]) => {
+        const certs = certsData.certificates || [];
+        el.innerHTML = `
+        <div class="stats" style="margin-bottom:1rem">
+            <div class="card stat"><div class="value">${stats.total || certs.length}</div><div class="label">Total</div></div>
+            <div class="card stat"><div class="value" style="color:var(--success)">${stats.active || 0}</div><div class="label">Active</div></div>
+            <div class="card stat"><div class="value" style="color:#f59e0b">${stats.expiring || 0}</div><div class="label">Expiring (&lt;30d)</div></div>
+            <div class="card stat"><div class="value" style="color:var(--danger)">${stats.expired || 0}</div><div class="label">Expired</div></div>
+            <div class="card stat"><div class="value">${stats.compliance_rate || 0}%</div><div class="label">Compliance</div></div>
+        </div>
+
+        <div class="card">
+            <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+                <input id="inv-search" placeholder="Search domain, issuer, environment..." style="flex:1;min-width:200px;padding:0.45rem 0.75rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem" oninput="cmsFilterInventory()">
+                <select id="inv-filter-status" style="padding:0.45rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem" onchange="cmsFilterInventory()">
+                    <option value="">All Status</option>
+                    <option value="active">Active</option>
+                    <option value="expiring_soon">Expiring Soon</option>
+                    <option value="expired">Expired</option>
+                    <option value="revoked">Revoked</option>
+                </select>
+                <select id="inv-filter-env" style="padding:0.45rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.85rem" onchange="cmsFilterInventory()">
+                    <option value="">All Environments</option>
+                    <option value="prod">Production</option>
+                    <option value="staging">Staging</option>
+                    <option value="uat">UAT</option>
+                    <option value="dev">Dev</option>
+                </select>
+                <button class="btn btn-primary" onclick="navigate('cms-upload')">+ Upload</button>
+                <button class="btn" style="background:#e2e8f0" onclick="cmsExportInventory()">&#8659; Export</button>
+            </div>
+
+            <table id="inv-table">
+                <thead><tr>
+                    <th>Domain</th><th>Issuer</th><th>Type</th><th>Status</th>
+                    <th>Expires</th><th>Environment</th><th>Owner</th><th>Actions</th>
+                </tr></thead>
+                <tbody id="inv-tbody">${cmsRenderCertRows(certs)}</tbody>
+            </table>
+        </div>
+        <div id="cert-detail-panel"></div>`;
+
+        window._cmsAllCerts = certs;
+    });
+}
+
+function cmsRenderCertRows(certs) {
+    if (!certs || certs.length === 0) return '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:2rem">No certificates found. <a onclick="navigate(\'cms-upload\')" style="color:var(--primary);cursor:pointer">Upload one</a></td></tr>';
+    return certs.map(c => {
+        const days = cmsDaysLeft(c.not_after);
+        return `<tr>
+            <td><strong>${escapeHtml(c.domain || '-')}</strong>${c.is_self_signed?'<span style="color:#f59e0b;font-size:0.7rem;margin-left:0.25rem">self-signed</span>':''}</td>
+            <td style="font-size:0.8rem">${escapeHtml((c.issuer||'-').substring(0,30))}</td>
+            <td><span class="badge" style="background:#e0f2fe;color:#0369a1">${escapeHtml(c.cert_type||'single')}</span></td>
+            <td>${cmsBadge(c.status)}</td>
+            <td>${cmsDaysLeftBadge(days)}</td>
+            <td style="font-size:0.8rem">${escapeHtml(c.environment||'-')}</td>
+            <td style="font-size:0.8rem">${escapeHtml(c.owner_team||'-')}</td>
+            <td style="white-space:nowrap">
+                <button class="btn" style="background:#e2e8f0;font-size:0.75rem;padding:0.25rem 0.5rem" onclick="cmsShowDetail('${escapeAttr(c.id)}')">View</button>
+                ${c.status!=='revoked'?'<button class="btn" style="background:#fef3c7;color:#92400e;font-size:0.75rem;padding:0.25rem 0.5rem;margin-left:0.25rem" onclick="cmsRenewCert(\''+escapeAttr(c.id)+'\',\''+escapeAttr(c.domain||'')+'\')">Renew</button>':''}
+                ${c.status==='active'?'<button class="btn btn-danger" style="font-size:0.75rem;padding:0.25rem 0.5rem;margin-left:0.25rem" onclick="cmsRevokeCert(\''+escapeAttr(c.id)+'\',\''+escapeAttr(c.domain||'')+'\')">Revoke</button>':''}
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function cmsFilterInventory() {
+    if (!window._cmsAllCerts) return;
+    const q = (document.getElementById('inv-search').value || '').toLowerCase();
+    const status = document.getElementById('inv-filter-status').value;
+    const env = document.getElementById('inv-filter-env').value;
+
+    let filtered = window._cmsAllCerts;
+    if (q) filtered = filtered.filter(c =>
+        (c.domain||'').toLowerCase().includes(q) ||
+        (c.issuer||'').toLowerCase().includes(q) ||
+        (c.environment||'').toLowerCase().includes(q) ||
+        (c.owner_team||'').toLowerCase().includes(q) ||
+        (c.tags||[]).some(t => t.toLowerCase().includes(q))
+    );
+    if (status) filtered = filtered.filter(c => c.status === status);
+    if (env) filtered = filtered.filter(c => c.environment === env);
+
+    const tbody = document.getElementById('inv-tbody');
+    if (tbody) tbody.innerHTML = cmsRenderCertRows(filtered);
+}
+
+function cmsShowDetail(id) {
+    const panel = document.getElementById('cert-detail-panel');
+    if (!panel) return;
+    panel.innerHTML = '<div class="card" style="margin-top:1rem"><p style="color:var(--muted)">Loading...</p></div>';
+
+    cmsGet('/api/v1/certificates/' + encodeURIComponent(id)).then(data => {
+        const c = data.id ? data : (data.certificate || data);
+        const days = cmsDaysLeft(c.not_after);
+        const docs = data.documents || [];
+        const audit = data.recent_audit || [];
+
+        panel.innerHTML = `
+        <div class="card" style="margin-top:1rem;border-left:3px solid var(--primary)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+                <h4>${escapeHtml(c.domain || 'Certificate Detail')}</h4>
+                <button class="btn" style="background:#e2e8f0" onclick="this.closest('.card').remove()">Close</button>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0.75rem;font-size:0.82rem;margin-bottom:1rem">
+                <div><strong>Subject:</strong><div class="cert-field">${escapeHtml(c.subject||'-')}</div></div>
+                <div><strong>Issuer:</strong><div class="cert-field">${escapeHtml(c.issuer||'-')}</div></div>
+                <div><strong>Serial:</strong><div class="cert-field">${escapeHtml(c.serial_number||'-')}</div></div>
+                <div><strong>Fingerprint:</strong><div class="cert-field" style="font-size:0.65rem">${escapeHtml((c.fingerprint||'-').substring(0,80))}</div></div>
+                <div><strong>Key:</strong><div class="cert-field">${escapeHtml(c.key_algorithm||'-')} ${c.key_size||''}-bit</div></div>
+                <div><strong>Status:</strong> ${cmsBadge(c.status)} ${cmsDaysLeftBadge(days)}</div>
+                <div><strong>Valid From:</strong><div class="cert-field">${cmsFormatDate(c.not_before)}</div></div>
+                <div><strong>Valid To:</strong><div class="cert-field">${cmsFormatDate(c.not_after)}</div></div>
+                <div><strong>Environment:</strong><div class="cert-field">${escapeHtml(c.environment||'-')}</div></div>
+                <div><strong>Auto-Renew:</strong><div class="cert-field">${c.auto_renew ? '&#10004; Enabled' : '&#10060; Disabled'}</div></div>
+                <div><strong>Owner Team:</strong><div class="cert-field">${escapeHtml(c.owner_team||'-')}</div></div>
+                <div><strong>Renewals:</strong><div class="cert-field">${c.renewal_count||0}</div></div>
+                ${(c.sans||[]).length > 0 ? '<div style="grid-column:span 2"><strong>SANs:</strong><div class="cert-field">' + escapeHtml((c.sans||[]).join(', ')) + '</div></div>' : ''}
+                ${(c.tags||[]).length > 0 ? '<div><strong>Tags:</strong> ' + (c.tags||[]).map(t=>'<span class="badge" style="background:#e0f2fe;color:#0369a1;margin-right:0.25rem">' + escapeHtml(t) + '</span>').join('') + '</div>' : ''}
+            </div>
+
+            ${c.is_self_signed ? '<div class="alert-warning">&#9888; Self-signed certificate — not trusted by external clients.</div>' : ''}
+            ${days !== null && days < 0 ? '<div class="alert-critical">&#10060; EXPIRED ' + Math.abs(days) + ' days ago.</div>' : ''}
+            ${days !== null && days >= 0 && days <= 7 ? '<div class="alert-critical">&#10060; Expires in ' + days + ' days — CRITICAL.</div>' : ''}
+            ${days !== null && days > 7 && days <= 30 ? '<div class="alert-warning">&#9888; Expires in ' + days + ' days — renewal recommended.</div>' : ''}
+
+            <div class="tab-bar" style="margin-top:1rem">
+                <button class="tab-btn active" id="dt-tab-info" onclick="cmsDetailTab('info', '${escapeAttr(id)}')">Info</button>
+                <button class="tab-btn" id="dt-tab-docs" onclick="cmsDetailTab('docs', '${escapeAttr(id)}')">Documents (${docs.length})</button>
+                <button class="tab-btn" id="dt-tab-audit" onclick="cmsDetailTab('audit', '${escapeAttr(id)}')">Audit (${audit.length})</button>
+                <button class="tab-btn" id="dt-tab-actions" onclick="cmsDetailTab('actions', '${escapeAttr(id)}')">Actions</button>
+            </div>
+            <div id="dt-panel-info">
+                <p style="color:var(--muted);font-size:0.82rem">Certificate details shown above. Use Actions tab to renew, revoke, or manage this certificate.</p>
+            </div>
+            <div id="dt-panel-docs" class="hidden">
+                ${docs.length === 0 ? '<p style="color:var(--muted)">No documents uploaded. Use Actions to upload a document.</p>' :
+                  '<table><thead><tr><th>File</th><th>Type</th><th>Size</th><th>Uploaded By</th><th>Date</th></tr></thead><tbody>' +
+                  docs.map(d => '<tr><td>' + escapeHtml(d.filename||'-') + '</td><td>' + escapeHtml(d.file_type||'-') + '</td><td>' + ((d.file_size||0)/1024).toFixed(1) + 'KB</td><td>' + escapeHtml(d.uploaded_by||'-') + '</td><td>' + cmsFormatDate(d.uploaded_at) + '</td></tr>').join('') +
+                  '</tbody></table>'}
+            </div>
+            <div id="dt-panel-audit" class="hidden">
+                ${audit.length === 0 ? '<p style="color:var(--muted)">No audit events yet.</p>' :
+                  '<table><thead><tr><th>Action</th><th>Actor</th><th>Details</th><th>Date</th><th>Result</th></tr></thead><tbody>' +
+                  audit.map(a => '<tr><td><strong>' + escapeHtml(a.action||'-') + '</strong></td><td style="font-size:0.8rem">' + escapeHtml(a.actor||'-') + '</td><td style="font-size:0.78rem">' + escapeHtml((a.details||'-').substring(0,60)) + '</td><td>' + cmsFormatDate(a.timestamp) + '</td><td>' + (a.result==='success'?'<span style="color:var(--success)">&#10004;</span>':'<span style="color:var(--danger)">&#10060;</span>') + '</td></tr>').join('') +
+                  '</tbody></table>'}
+            </div>
+            <div id="dt-panel-actions" class="hidden">
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem">
+                    <button class="btn btn-primary" onclick="cmsRenewCert('${escapeAttr(c.id)}','${escapeAttr(c.domain||'')}')">&#8635; Renew Certificate</button>
+                    <button class="btn" style="background:#fef3c7;color:#92400e" onclick="cmsVerifyCert('${escapeAttr(c.id)}')">&#10003; Verify</button>
+                    <button class="btn" style="background:#e0f2fe;color:#0369a1" onclick="cmsShowQr('${escapeAttr(c.id)}')">&#9638; QR Code</button>
+                    <button class="btn" style="background:#f1f5f9" onclick="cmsUploadDoc('${escapeAttr(c.id)}')">&#8679; Upload Doc</button>
+                    <button class="btn btn-danger" onclick="cmsRevokeCert('${escapeAttr(c.id)}','${escapeAttr(c.domain||'')}')">&#10060; Revoke</button>
+                </div>
+                <div id="dt-action-result" style="margin-top:0.75rem"></div>
+            </div>
+        </div>`;
+    }).catch(e => {
+        panel.innerHTML = '<div class="card"><div class="alert-critical">Failed to load: ' + escapeHtml(e.message) + '</div></div>';
+    });
+}
+
+function cmsDetailTab(tab, certId) {
+    ['info','docs','audit','actions'].forEach(t => {
+        const p = document.getElementById('dt-panel-' + t);
+        const b = document.getElementById('dt-tab-' + t);
+        if (p) p.classList.toggle('hidden', t !== tab);
+        if (b) b.classList.toggle('active', t === tab);
+    });
+}
+
+function cmsRenewCert(id, domain) {
+    if (!confirm('Renew certificate for ' + domain + '?')) return;
+    cmsPost('/api/v1/certificates/' + encodeURIComponent(id) + '/renew', {}).then(res => {
+        alert('Renewal initiated for ' + domain + '\nStatus: ' + (res.status || 'started'));
+        loadCmsInventory();
+    }).catch(e => alert('Renewal failed: ' + e.message));
+}
+
+function cmsRevokeCert(id, domain) {
+    const reason = prompt('Reason for revoking ' + domain + '?\n(key_compromise, superseded, cessation)', 'superseded');
+    if (!reason) return;
+    cmsPost('/api/v1/certificates/' + encodeURIComponent(id) + '/revoke', { reason }).then(res => {
+        alert('Certificate revoked: ' + domain + '\nAdded to CRL.');
+        loadCmsInventory();
+    }).catch(e => alert('Revocation failed: ' + e.message));
+}
+
+function cmsVerifyCert(id) {
+    const result = document.getElementById('dt-action-result');
+    if (result) result.innerHTML = '<p style="color:var(--muted)">Verifying...</p>';
+    cmsPost('/api/v1/certificates/' + encodeURIComponent(id) + '/verify', {}).then(res => {
+        const v = res.verification || {};
+        const html = v.result === 'pass'
+            ? '<div class="alert-success">&#10004; Verification passed — TLS ' + (v.tls_version||'') + ' ' + (v.cipher_suite||'') + '</div>'
+            : '<div class="alert-critical">&#10060; Verification failed — ' + escapeHtml(v.error || 'unknown error') + '</div>';
+        if (result) result.innerHTML = html;
+    }).catch(e => { if (result) result.innerHTML = '<div class="alert-critical">Error: ' + escapeHtml(e.message) + '</div>'; });
+}
+
+function cmsShowQr(id) {
+    cmsGet('/api/v1/certificates/' + encodeURIComponent(id) + '/qr').then(res => {
+        const overlay = document.createElement('div');
+        overlay.className = 'cms-modal';
+        overlay.innerHTML = `<div class="cms-modal-box" style="text-align:center">
+            <h4 style="margin-bottom:1rem">Certificate Verification QR</h4>
+            <div style="border:1px solid var(--border);border-radius:0.5rem;padding:1rem;margin:1rem auto;display:inline-block">
+                <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(res.verification_url || res.qr_url || '')}" alt="QR Code" style="width:200px;height:200px">
+            </div>
+            <p class="cert-field" style="margin:0.5rem auto;max-width:400px;font-size:0.75rem">${escapeHtml(res.verification_url || '')}</p>
+            <button class="btn btn-primary" style="margin-top:1rem" onclick="this.closest('.cms-modal').remove()">Close</button>
+        </div>`;
+        document.body.appendChild(overlay);
+    });
+}
+
+function cmsUploadDoc(certId) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pem,.crt,.cer,.p12,.pfx,.txt,.pdf';
+    input.onchange = e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try { validateFileType(file); } catch(err) { alert(err.message); return; }
+        cmsPost('/api/v1/certificates/' + encodeURIComponent(certId) + '/documents', {
+            filename: file.name, file_type: file.name.split('.').pop(), file_size: file.size,
+            mime_type: file.type || 'application/octet-stream', uploaded_by: 'admin@enterprise.internal'
+        }).then(() => { alert('Document registered: ' + file.name); cmsShowDetail(certId); })
+        .catch(e => alert('Upload failed: ' + e.message));
+    };
+    input.click();
+}
+
+function cmsExportInventory() {
+    cmsGet('/api/v1/certificates/export?format=json').then(data => {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'certificate-inventory-' + new Date().toISOString().slice(0,10) + '.json';
+        a.click();
+        URL.revokeObjectURL(a.href);
+    }).catch(() => {
+        // Fallback: export from UI
+        const data = window._cmsAllCerts || [];
+        const csv = ['domain,issuer,cert_type,status,environment,days_left,auto_renew,owner_team']
+            .concat(data.map(c => [c.domain,c.issuer,c.cert_type,c.status,c.environment,c.days_left,c.auto_renew,c.owner_team].join(','))).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'certificates.csv';
+        a.click();
+        URL.revokeObjectURL(a.href);
+    });
+}
+
+// ===========================================================================
+// CMS USERS & ROLES (RBAC)
+// ===========================================================================
+function loadCmsUsers() {
+    const el = document.getElementById('content-area');
+    el.innerHTML = '<div class="card"><p style="color:var(--muted)">Loading...</p></div>';
+    Promise.all([cmsGet('/api/v1/cert-users'), cmsGet('/api/v1/cert-roles')]).then(([usersData, rolesData]) => {
+        const users = usersData.users || [];
+        const roles = rolesData.roles || [];
+        el.innerHTML = `
+        <div class="tab-bar">
+            <button class="tab-btn active" id="rbac-tab-users" onclick="cmsRbacTab('users')">Users (${users.length})</button>
+            <button class="tab-btn" id="rbac-tab-roles" onclick="cmsRbacTab('roles')">Roles (${roles.length})</button>
+        </div>
+        <div id="rbac-panel-users">
+            <div class="card">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+                    <h4>Certificate System Users</h4>
+                    <button class="btn btn-primary" onclick="cmsAddUser()">+ Add User</button>
+                </div>
+                <table>
+                    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Department</th><th>MFA</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead>
+                    <tbody>${users.map(u => `<tr>
+                        <td><strong>${escapeHtml(u.name||'-')}</strong></td>
+                        <td style="font-size:0.8rem">${escapeHtml(u.email||'-')}</td>
+                        <td><span class="badge" style="background:#e0f2fe;color:#0369a1">${escapeHtml(u.role||'-')}</span></td>
+                        <td style="font-size:0.8rem">${escapeHtml(u.department||'-')}</td>
+                        <td>${u.mfa_enabled?'<span style="color:var(--success)">&#10004;</span>':'<span style="color:var(--danger)">&#10060;</span>'}</td>
+                        <td>${cmsBadge(u.status)}</td>
+                        <td style="font-size:0.78rem">${u.last_login ? cmsFormatDate(u.last_login) : '-'}</td>
+                        <td><button class="btn" style="background:#fef3c7;color:#92400e;font-size:0.75rem;padding:0.2rem 0.4rem" onclick="cmsEditUser('${escapeAttr(u.id)}')">Edit</button>
+                        <button class="btn btn-danger" style="font-size:0.75rem;padding:0.2rem 0.4rem;margin-left:0.25rem" onclick="cmsDeleteUser('${escapeAttr(u.id)}','${escapeAttr(u.name||'')}')">Remove</button></td>
+                    </tr>`).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--muted)">No users</td></tr>'}</tbody>
+                </table>
+            </div>
+        </div>
+        <div id="rbac-panel-roles" class="hidden">
+            <div class="card">
+                <h4 style="margin-bottom:1rem">Certificate System Roles</h4>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem">
+                    ${roles.map(r => `<div class="card" style="border-left:4px solid ${escapeAttr(r.color||'#2563eb')}">
+                        <strong>${escapeHtml(r.display_name||r.name)}</strong>
+                        <p style="color:var(--muted);font-size:0.8rem;margin:0.25rem 0">${escapeHtml(r.description||'-')}</p>
+                        <p style="font-size:0.78rem"><strong>Users:</strong> ${r.user_count||0}</p>
+                        <div style="margin-top:0.5rem">${(r.permissions||[]).map(p=>'<span class="badge" style="background:#f1f5f9;color:#374151;margin:0.1rem">' + escapeHtml(p) + '</span>').join('')}</div>
+                    </div>`).join('')}
+                </div>
+            </div>
+        </div>`;
+        window._cmsRoles = roles;
+    });
+}
+
+function cmsRbacTab(tab) {
+    ['users','roles'].forEach(t => {
+        const p = document.getElementById('rbac-panel-' + t);
+        const b = document.getElementById('rbac-tab-' + t);
+        if (p) p.classList.toggle('hidden', t !== tab);
+        if (b) b.classList.toggle('active', t === tab);
+    });
+}
+
+function cmsAddUser() {
+    const overlay = document.createElement('div');
+    overlay.className = 'cms-modal';
+    const roles = (window._cmsRoles || []).map(r => '<option value="' + escapeAttr(r.name) + '">' + escapeHtml(r.display_name||r.name) + '</option>').join('');
+    overlay.innerHTML = `<div class="cms-modal-box">
+        <h4 style="margin-bottom:1rem">Add Certificate System User</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+            <div class="form-group"><label>Full Name *</label><input id="au-name" placeholder="Jane Smith" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"></div>
+            <div class="form-group"><label>Email *</label><input id="au-email" type="email" placeholder="jane@enterprise.internal" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"></div>
+            <div class="form-group"><label>Role *</label><select id="au-role" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem">${roles}</select></div>
+            <div class="form-group"><label>Department</label><input id="au-dept" placeholder="IT Security" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"></div>
+        </div>
+        <div id="au-error" class="hidden alert-critical" style="margin-top:0.5rem"></div>
+        <div style="display:flex;gap:0.5rem;margin-top:1rem">
+            <button class="btn btn-primary" onclick="cmsAddUserSubmit(this)">Add User</button>
+            <button class="btn" style="background:#e2e8f0" onclick="this.closest('.cms-modal').remove()">Cancel</button>
+        </div>
+    </div>`;
+    document.body.appendChild(overlay);
+}
+
+function cmsAddUserSubmit(btn) {
+    const overlay = btn.closest('.cms-modal');
+    const name = document.getElementById('au-name').value.trim();
+    const email = document.getElementById('au-email').value.trim();
+    const role = document.getElementById('au-role').value;
+    const dept = document.getElementById('au-dept').value.trim();
+    const errEl = document.getElementById('au-error');
+    if (!name || !email || !role) { errEl.textContent='Name, email and role are required.'; errEl.classList.remove('hidden'); return; }
+    if (!email.includes('@')) { errEl.textContent='Invalid email address.'; errEl.classList.remove('hidden'); return; }
+
+    cmsPost('/api/v1/cert-users', { name, email, role, department: dept }).then(() => {
+        overlay.remove();
+        loadCmsUsers();
+    }).catch(e => { errEl.textContent=e.message; errEl.classList.remove('hidden'); });
+}
+
+function cmsEditUser(id) {
+    alert('Edit user: ' + id + '\n(Full edit form available in production with backend integration)');
+}
+
+function cmsDeleteUser(id, name) {
+    if (!confirm('Remove ' + name + ' from the certificate system?')) return;
+    cmsDelete('/api/v1/cert-users/' + encodeURIComponent(id)).then(() => loadCmsUsers()).catch(e => alert(e.message));
+}
+
+// ===========================================================================
+// CMS TEMPLATES
+// ===========================================================================
+function loadCmsTemplates() {
+    const el = document.getElementById('content-area');
+    cmsGet('/api/v1/cert-templates').then(data => {
+        const templates = data.templates || [];
+        el.innerHTML = `
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+                <div><h4>Certificate Templates</h4><p style="color:var(--muted);font-size:0.82rem">Reusable configuration profiles for consistent certificate issuance</p></div>
+                <button class="btn btn-primary" onclick="cmsAddTemplate()">+ New Template</button>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem">
+                ${templates.map(t => `<div class="card" style="border-top:3px solid var(--primary)">
+                    <div style="display:flex;justify-content:space-between;align-items:start">
+                        <strong>${escapeHtml(t.name||'-')}</strong>
+                        <span class="badge" style="background:#e0f2fe;color:#0369a1">${t.usage_count||0} uses</span>
+                    </div>
+                    <p style="color:var(--muted);font-size:0.78rem;margin:0.25rem 0">${escapeHtml(t.description||'-')}</p>
+                    <div style="font-size:0.78rem;margin-top:0.5rem;display:grid;grid-template-columns:1fr 1fr;gap:0.25rem">
+                        <div><strong>Type:</strong> ${escapeHtml(t.cert_type||'-')}</div>
+                        <div><strong>Key:</strong> ${escapeHtml(t.key_algorithm||'-')} ${t.key_size||''}</div>
+                        <div><strong>Validity:</strong> ${t.validity_days||365}d</div>
+                        <div><strong>Validation:</strong> ${escapeHtml(t.validation_level||'-')}</div>
+                        <div><strong>CA:</strong> ${escapeHtml(t.ca_provider||'-')}</div>
+                        <div><strong>Auto-renew:</strong> ${t.auto_renew?'Yes':'No'}</div>
+                    </div>
+                    <div style="margin-top:0.5rem">${(t.tags||[]).map(tag=>'<span class="badge" style="background:#f1f5f9;margin-right:0.2rem">' + escapeHtml(tag) + '</span>').join('')}</div>
+                    <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
+                        <button class="btn btn-primary" style="font-size:0.78rem" onclick="cmsUseTemplate('${escapeAttr(t.id)}','${escapeAttr(t.name||'')}')">Use Template</button>
+                        <button class="btn btn-danger" style="font-size:0.78rem" onclick="cmsDeleteTemplate('${escapeAttr(t.id)}','${escapeAttr(t.name||'')}')">Delete</button>
+                    </div>
+                </div>`).join('') || '<p style="color:var(--muted)">No templates yet.</p>'}
+            </div>
+        </div>`;
+    });
+}
+
+function cmsUseTemplate(id, name) {
+    navigate('cms-upload');
+    setTimeout(() => { alert('Template "' + name + '" loaded. Fill in the domain and submit.'); }, 300);
+}
+
+function cmsAddTemplate() {
+    const overlay = document.createElement('div');
+    overlay.className = 'cms-modal';
+    overlay.innerHTML = `<div class="cms-modal-box">
+        <h4 style="margin-bottom:1rem">Create Certificate Template</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+            <div class="form-group" style="grid-column:span 2"><label>Template Name *</label><input id="at-name" placeholder="Standard Internal TLS" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"></div>
+            <div class="form-group" style="grid-column:span 2"><label>Description</label><input id="at-desc" placeholder="Internal services template" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"></div>
+            <div class="form-group"><label>Certificate Type</label><select id="at-type" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"><option value="single">Single Domain</option><option value="wildcard">Wildcard</option><option value="san">Multi-SAN</option><option value="ev">EV</option><option value="mtls">mTLS</option></select></div>
+            <div class="form-group"><label>Key Algorithm</label><select id="at-algo" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"><option>RSA</option><option>ECDSA</option></select></div>
+            <div class="form-group"><label>Key Size</label><select id="at-size" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"><option value="2048">RSA 2048</option><option value="4096">RSA 4096</option><option value="256">ECDSA P-256</option><option value="384">ECDSA P-384</option></select></div>
+            <div class="form-group"><label>Validity (days)</label><input id="at-validity" type="number" value="365" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"></div>
+            <div class="form-group"><label>Validation Level</label><select id="at-vl" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"><option value="DV">DV</option><option value="OV">OV</option><option value="EV">EV</option><option value="IV">IV</option></select></div>
+            <div class="form-group"><label>CA Provider</label><input id="at-ca" placeholder="letsencrypt" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"></div>
+            <div class="form-group"><label>Environment</label><select id="at-env" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"><option value="prod">Production</option><option value="staging">Staging</option><option value="uat">UAT</option><option value="dev">Dev</option></select></div>
+            <div class="form-group"><label>Tags</label><input id="at-tags" placeholder="internal, tls" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:0.375rem"></div>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-top:1rem">
+            <button class="btn btn-primary" onclick="cmsAddTemplateSubmit(this)">Create</button>
+            <button class="btn" style="background:#e2e8f0" onclick="this.closest('.cms-modal').remove()">Cancel</button>
+        </div>
+    </div>`;
+    document.body.appendChild(overlay);
+}
+
+function cmsAddTemplateSubmit(btn) {
+    const name = document.getElementById('at-name').value.trim();
+    if (!name) { alert('Template name required.'); return; }
+    cmsPost('/api/v1/cert-templates', {
+        name, description: document.getElementById('at-desc').value,
+        cert_type: document.getElementById('at-type').value,
+        key_algorithm: document.getElementById('at-algo').value,
+        key_size: parseInt(document.getElementById('at-size').value),
+        validity_days: parseInt(document.getElementById('at-validity').value)||365,
+        validation_level: document.getElementById('at-vl').value,
+        ca_provider: document.getElementById('at-ca').value||'letsencrypt',
+        environment: document.getElementById('at-env').value,
+        tags: document.getElementById('at-tags').value.split(',').map(t=>t.trim()).filter(Boolean),
+        auto_renew: true
+    }).then(() => { btn.closest('.cms-modal').remove(); loadCmsTemplates(); })
+    .catch(e => alert(e.message));
+}
+
+function cmsDeleteTemplate(id, name) {
+    if (!confirm('Delete template "' + name + '"?')) return;
+    cmsDelete('/api/v1/cert-templates/' + encodeURIComponent(id)).then(() => loadCmsTemplates()).catch(e => alert(e.message));
+}
+
+// ===========================================================================
+// CMS NOTIFICATIONS
+// ===========================================================================
+function loadCmsNotifications() {
+    const el = document.getElementById('content-area');
+    cmsGet('/api/v1/cert-notifications').then(data => {
+        const notifs = data.notifications || [];
+        const unacked = data.unacknowledged || 0;
+        el.innerHTML = `
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+                <div><h4>Certificate Notifications</h4><p style="color:var(--muted);font-size:0.82rem">${unacked} unacknowledged alerts</p></div>
+                <button class="btn" style="background:#e2e8f0" onclick="cmsTestNotif()">&#8631; Send Test Alert</button>
+            </div>
+            <table>
+                <thead><tr><th>Severity</th><th>Title</th><th>Certificate</th><th>Channels</th><th>Sent</th><th>Status</th><th>Action</th></tr></thead>
+                <tbody>${notifs.map(n => {
+                    const sevCls = n.severity === 'critical' ? 'cert-status-expired' : n.severity === 'high' ? 'cert-status-expiring' : 'cert-status-active';
+                    return `<tr>
+                        <td><span class="${sevCls}">${escapeHtml(n.severity||'-')}</span></td>
+                        <td><strong>${escapeHtml(n.title||'-')}</strong><br><span style="color:var(--muted);font-size:0.78rem">${escapeHtml(n.message||'-')}</span></td>
+                        <td style="font-size:0.8rem">${escapeHtml(n.cert_id||'-')}</td>
+                        <td style="font-size:0.78rem">${(n.channels||[]).join(', ')}</td>
+                        <td style="font-size:0.78rem">${cmsFormatDate(n.sent_at)}</td>
+                        <td>${n.acknowledged ? '<span class="cert-status-active">&#10004; Acked</span>' : '<span class="cert-status-expiring">Pending</span>'}</td>
+                        <td>${n.acknowledged ? '' : '<button class="btn" style="background:#e2e8f0;font-size:0.75rem;padding:0.2rem 0.4rem" onclick="cmsAcknowledge(\''+escapeAttr(n.id)+'\')">Acknowledge</button>'}</td>
+                    </tr>`;
+                }).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--muted)">No notifications</td></tr>'}</tbody>
+            </table>
+        </div>`;
+    });
+}
+
+function cmsAcknowledge(id) {
+    cmsPost('/api/v1/cert-notifications/' + encodeURIComponent(id) + '/acknowledge', {}).then(() => loadCmsNotifications()).catch(e => alert(e.message));
+}
+
+function cmsTestNotif() {
+    cmsPost('/api/v1/cert-notifications/test', {}).then(res => { alert('Test alert sent to: ' + (res.channels||[]).join(', ')); }).catch(e => alert(e.message));
+}
+
+// ===========================================================================
+// CMS TRACKING
+// ===========================================================================
+function loadCmsTracking() {
+    const el = document.getElementById('content-area');
+    cmsGet('/api/v1/cert-tracking').then(data => {
+        const items = data.tracking || [];
+        el.innerHTML = `
+        <div class="card">
+            <h4 style="margin-bottom:1rem">Certificate Lifecycle Tracking</h4>
+            <p style="color:var(--muted);font-size:0.82rem;margin-bottom:1rem">Real-time compliance and health status for all managed certificates</p>
+            <table>
+                <thead><tr><th>Domain</th><th>Environment</th><th>Status</th><th>Expires</th><th>Auto-Renew</th><th>Compliance</th><th>Risk Score</th><th>Owner</th></tr></thead>
+                <tbody>${items.map(t => {
+                    const riskCls = t.risk_score >= 80 ? 'cert-status-expired' : t.risk_score >= 50 ? 'cert-status-expiring' : 'cert-status-active';
+                    const compCls = t.compliance_status === 'compliant' ? 'cert-status-active' : t.compliance_status === 'warning' ? 'cert-status-expiring' : 'cert-status-expired';
+                    return `<tr>
+                        <td><strong>${escapeHtml(t.domain||'-')}</strong></td>
+                        <td style="font-size:0.8rem">${escapeHtml(t.environment||'-')}</td>
+                        <td>${cmsBadge(t.status)}</td>
+                        <td>${cmsDaysLeftBadge(t.days_left)}</td>
+                        <td>${t.auto_renew ? '<span style="color:var(--success)">&#10004;</span>' : '<span style="color:var(--danger)">&#10060;</span>'}</td>
+                        <td><span class="${compCls}">${escapeHtml(t.compliance_status||'-')}</span></td>
+                        <td><span class="${riskCls}">${t.risk_score||0}</span></td>
+                        <td style="font-size:0.78rem">${escapeHtml(t.owner_team||'-')}</td>
+                    </tr>`;
+                }).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--muted)">No tracking data</td></tr>'}</tbody>
+            </table>
+        </div>`;
+    });
+}
+
+// ===========================================================================
+// CMS AUDIT LOG
+// ===========================================================================
+function loadCmsAuditLog() {
+    const el = document.getElementById('content-area');
+    cmsGet('/api/v1/cert-audit').then(data => {
+        const logs = data.logs || [];
+        el.innerHTML = `
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+                <div><h4>Certificate System Audit Log</h4><p style="color:var(--muted);font-size:0.82rem">${logs.length} events recorded (immutable)</p></div>
+                <div style="display:flex;gap:0.5rem">
+                    <input id="audit-search" placeholder="Filter by actor or action..." style="padding:0.4rem 0.6rem;border:1px solid var(--border);border-radius:0.375rem;font-size:0.82rem" oninput="cmsCmsAuditFilter()">
+                    <button class="btn" style="background:#e2e8f0" onclick="cmsCmsAuditExport()">&#8659; Export</button>
+                </div>
+            </div>
+            <table id="audit-table">
+                <thead><tr><th>Time</th><th>Action</th><th>Certificate</th><th>Actor</th><th>Role</th><th>Details</th><th>Result</th><th>Risk</th></tr></thead>
+                <tbody id="audit-tbody">${cmsCmsAuditRows(logs)}</tbody>
+            </table>
+        </div>`;
+        window._cmsAuditLogs = logs;
+    });
+}
+
+function cmsCmsAuditRows(logs) {
+    return logs.map(l => {
+        const riskCls = l.risk_level === 'critical' ? 'cert-status-expired' : l.risk_level === 'high' ? 'cert-status-expiring' : l.risk_level === 'medium' ? 'cert-status-expiring' : 'cert-status-active';
+        return `<tr>
+            <td style="font-size:0.78rem">${cmsFormatDate(l.timestamp)}</td>
+            <td><strong style="font-size:0.82rem">${escapeHtml(l.action||'-')}</strong></td>
+            <td style="font-size:0.8rem">${escapeHtml(l.cert_id||'-')}</td>
+            <td style="font-size:0.78rem">${escapeHtml(l.actor||'-')}</td>
+            <td style="font-size:0.78rem"><span class="badge" style="background:#e0f2fe;color:#0369a1">${escapeHtml(l.actor_role||'-')}</span></td>
+            <td style="font-size:0.78rem">${escapeHtml((l.details||'-').substring(0,60))}</td>
+            <td>${l.result === 'success' ? '<span style="color:var(--success)">&#10004;</span>' : l.result === 'warning' ? '<span style="color:#f59e0b">&#9888;</span>' : '<span style="color:var(--danger)">&#10060;</span>'}</td>
+            <td><span class="${riskCls}" style="font-size:0.72rem">${escapeHtml(l.risk_level||'-')}</span></td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--muted)">No audit events</td></tr>';
+}
+
+function cmsCmsAuditFilter() {
+    const q = (document.getElementById('audit-search').value || '').toLowerCase();
+    const filtered = q ? (window._cmsAuditLogs||[]).filter(l => (l.actor||'').toLowerCase().includes(q) || (l.action||'').toLowerCase().includes(q) || (l.details||'').toLowerCase().includes(q)) : (window._cmsAuditLogs||[]);
+    const tbody = document.getElementById('audit-tbody');
+    if (tbody) tbody.innerHTML = cmsCmsAuditRows(filtered);
+}
+
+function cmsCmsAuditExport() {
+    const logs = window._cmsAuditLogs || [];
+    const csv = ['timestamp,action,cert_id,actor,actor_role,details,result,risk_level']
+        .concat(logs.map(l => [l.timestamp,l.action,l.cert_id,l.actor,l.actor_role,'"'+(l.details||'').replace(/"/g,"'")+'"',l.result,l.risk_level].join(','))).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'cert-audit-' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
 }

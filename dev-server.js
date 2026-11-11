@@ -3253,6 +3253,308 @@ function handleMockAPI(req, res) {
         }
     }
 
+
+    // ==========================================================================
+    // CERTIFICATE MANAGEMENT SYSTEM (Full Security Implementation)
+    // ==========================================================================
+
+    // Patch existing mockCerts with extended fields
+    mockCerts.forEach(function(c) {
+        if (!c.cert_type) c.cert_type = c.domain.startsWith('*') ? 'wildcard' : 'single';
+        if (!c.serial_number) c.serial_number = '0' + c.id.replace('cert-','') + ':AB:CD:EF';
+        if (!c.fingerprint) c.fingerprint = 'SHA256:' + c.id.replace('cert-','').padStart(2,'0').repeat(16).toUpperCase();
+        if (!c.validation_level) c.validation_level = c.environment==='prod' ? 'OV' : 'DV';
+        if (!c.ca_provider) c.ca_provider = c.issuer.includes('Encrypt') ? 'letsencrypt' : c.issuer.includes('Enterprise') ? 'enterprise-pki' : 'digicert';
+        if (!c.owner_team) c.owner_team = 'Platform Engineering';
+        if (!c.owner_email) c.owner_email = 'platform@enterprise.internal';
+        if (!c.tags) c.tags = [c.environment, c.cert_type];
+        if (c.auto_renew === undefined) c.auto_renew = c.days_left < 60;
+        if (!c.renewal_count) c.renewal_count = 0;
+        if (!c.qr_code) c.qr_code = 'https://verify.enterprise.internal/cert/' + c.id;
+        if (!c.verification_url) c.verification_url = 'https://verify.enterprise.internal/cert/' + c.id;
+        if (!c.not_before) c.not_before = new Date(Date.now() - 300*86400000).toISOString();
+        if (!c.created_at) c.created_at = c.not_before;
+        if (!c.deployment_targets) c.deployment_targets = [];
+    });
+
+    // Extended certificate inventory
+    if (!mockCerts.find(function(c){return c.id==='cert-04';})) {
+        mockCerts.push(
+            { id:'cert-04', cert_type:'ev', domain:'payments.enterprise.com', subject:'CN=payments.enterprise.com', issuer:'DigiCert EV RSA CA G2', serial_number:'0F:1A:2B:3C', fingerprint:'SHA256:D4E5F6A7B8C9D0E1', sans:['payments.enterprise.com'], days_left:187, status:'active', key_algorithm:'RSA', key_size:4096, is_self_signed:false, environment:'prod', validation_level:'EV', ca_provider:'digicert', owner_team:'Security Team', owner_email:'security@enterprise.internal', tags:['production','payments','pci-dss'], auto_renew:true, renewal_count:0, qr_code:'https://verify.enterprise.internal/cert/cert-04', verification_url:'https://verify.enterprise.internal/cert/cert-04', deployment_targets:['aws-alb-payments'], not_before:new Date(Date.now()-178*86400000).toISOString(), not_after:new Date(Date.now()+187*86400000).toISOString(), created_at:new Date(Date.now()-178*86400000).toISOString() },
+            { id:'cert-05', cert_type:'mtls', domain:'service-mesh.enterprise.internal', subject:'CN=service-mesh.enterprise.internal', issuer:'Enterprise Private CA', serial_number:'01:00:00:00:00:00:00:05', fingerprint:'SHA256:E5F6A7B8C9D0E1F2', sans:['service-mesh.enterprise.internal'], days_left:62, status:'active', key_algorithm:'ECDSA', key_size:384, is_self_signed:false, environment:'prod', validation_level:'IV', ca_provider:'enterprise-pki', owner_team:'Platform Engineering', owner_email:'platform@enterprise.internal', tags:['internal','service-mesh','mtls'], auto_renew:true, renewal_count:2, qr_code:'https://verify.enterprise.internal/cert/cert-05', verification_url:'https://verify.enterprise.internal/cert/cert-05', deployment_targets:['istio-mesh'], not_before:new Date(Date.now()-303*86400000).toISOString(), not_after:new Date(Date.now()+62*86400000).toISOString(), created_at:new Date(Date.now()-303*86400000).toISOString() },
+            { id:'cert-06', cert_type:'single', domain:'auth.enterprise.com', subject:'CN=auth.enterprise.com', issuer:'Sectigo RSA Domain Validation Secure Server CA', serial_number:'00:12:34:56:78:9A', fingerprint:'SHA256:F6A7B8C9D0E1F2A3', sans:['auth.enterprise.com','sso.enterprise.com'], days_left:134, status:'active', key_algorithm:'RSA', key_size:2048, is_self_signed:false, environment:'prod', validation_level:'DV', ca_provider:'sectigo', owner_team:'Identity Team', owner_email:'identity@enterprise.internal', tags:['production','auth','sso'], auto_renew:true, renewal_count:1, qr_code:'https://verify.enterprise.internal/cert/cert-06', verification_url:'https://verify.enterprise.internal/cert/cert-06', deployment_targets:['keycloak-prod'], not_before:new Date(Date.now()-231*86400000).toISOString(), not_after:new Date(Date.now()+134*86400000).toISOString(), created_at:new Date(Date.now()-231*86400000).toISOString() },
+            { id:'cert-07', cert_type:'code_signing', domain:'code-signing.enterprise.internal', subject:'CN=M2P Engineering Team,O=Enterprise Corp', issuer:'DigiCert Trusted G4 Code Signing RSA4096', serial_number:'0C:0D:0E:0F:10:11', fingerprint:'SHA256:A7B8C9D0E1F2A3B4', sans:[], days_left:91, status:'active', key_algorithm:'RSA', key_size:4096, is_self_signed:false, environment:'prod', validation_level:'EV', ca_provider:'digicert', owner_team:'DevOps', owner_email:'devops@enterprise.internal', tags:['code-signing','ci-cd'], auto_renew:false, renewal_count:0, qr_code:'https://verify.enterprise.internal/cert/cert-07', verification_url:'https://verify.enterprise.internal/cert/cert-07', deployment_targets:['ci-cd-pipeline'], not_before:new Date(Date.now()-274*86400000).toISOString(), not_after:new Date(Date.now()+91*86400000).toISOString(), created_at:new Date(Date.now()-274*86400000).toISOString() },
+            { id:'cert-08', cert_type:'san', domain:'api.enterprise.com', subject:'CN=api.enterprise.com', issuer:"Let's Encrypt Authority X3", serial_number:'04:CD:EF:01:23:45', fingerprint:'SHA256:B8C9D0E1F2A3B4C5', sans:['api.enterprise.com','api-v2.enterprise.com','graphql.enterprise.com'], days_left:5, status:'expiring_soon', key_algorithm:'ECDSA', key_size:256, is_self_signed:false, environment:'prod', validation_level:'DV', ca_provider:'letsencrypt', owner_team:'API Team', owner_email:'api@enterprise.internal', tags:['production','api','multi-san'], auto_renew:true, renewal_count:6, qr_code:'https://verify.enterprise.internal/cert/cert-08', verification_url:'https://verify.enterprise.internal/cert/cert-08', deployment_targets:['aws-alb-api'], not_before:new Date(Date.now()-85*86400000).toISOString(), not_after:new Date(Date.now()+5*86400000).toISOString(), created_at:new Date(Date.now()-85*86400000).toISOString() },
+            { id:'cert-09', cert_type:'single', domain:'vpn.enterprise.com', subject:'CN=vpn.enterprise.com', issuer:'GlobalSign RSA OV SSL CA 2018', serial_number:'22:33:44:55:66:77', fingerprint:'SHA256:C9D0E1F2A3B4C5D6', sans:['vpn.enterprise.com'], days_left:-1, status:'expired', key_algorithm:'RSA', key_size:2048, is_self_signed:false, environment:'prod', validation_level:'OV', ca_provider:'globalsign', owner_team:'Network Team', owner_email:'network@enterprise.internal', tags:['vpn','expired'], auto_renew:false, renewal_count:0, qr_code:'https://verify.enterprise.internal/cert/cert-09', verification_url:'https://verify.enterprise.internal/cert/cert-09', deployment_targets:[], not_before:new Date(Date.now()-366*86400000).toISOString(), not_after:new Date(Date.now()-1).toISOString(), created_at:new Date(Date.now()-366*86400000).toISOString() },
+            { id:'cert-10', cert_type:'single', domain:'mail.enterprise.com', subject:'CN=mail.enterprise.com', issuer:'DigiCert TLS RSA SHA256 2020 CA1', serial_number:'0D:0E:0F:10:11:12', fingerprint:'SHA256:D0E1F2A3B4C5D6E7', sans:['mail.enterprise.com','smtp.enterprise.com','imap.enterprise.com'], days_left:220, status:'active', key_algorithm:'RSA', key_size:2048, is_self_signed:false, environment:'prod', validation_level:'OV', ca_provider:'digicert', owner_team:'IT Operations', owner_email:'it@enterprise.internal', tags:['production','email'], auto_renew:true, renewal_count:0, qr_code:'https://verify.enterprise.internal/cert/cert-10', verification_url:'https://verify.enterprise.internal/cert/cert-10', deployment_targets:['mail-server'], not_before:new Date(Date.now()-145*86400000).toISOString(), not_after:new Date(Date.now()+220*86400000).toISOString(), created_at:new Date(Date.now()-145*86400000).toISOString() }
+        );
+    }
+
+    // Certificate sub-system data stores (initialize once per server instance)
+    if (!global._certSystemInit) {
+        global._certSystemInit = true;
+        global.certUsers = [
+            { id:'cu-001', name:'Sarah Chen', email:'sarah.chen@enterprise.internal', role:'cert_admin', department:'IT Security', permissions:['issue','renew','revoke','deploy','view_all','manage_templates','manage_users','audit','delete'], created_at:new Date(Date.now()-180*86400000).toISOString(), status:'active', mfa_enabled:true, last_login:new Date(Date.now()-3600000).toISOString() },
+            { id:'cu-002', name:'Marcus Johnson', email:'marcus.johnson@enterprise.internal', role:'cert_manager', department:'Platform Engineering', permissions:['issue','renew','deploy','view_all'], created_at:new Date(Date.now()-120*86400000).toISOString(), status:'active', mfa_enabled:true, last_login:new Date(Date.now()-7200000).toISOString() },
+            { id:'cu-003', name:'Emily Rodriguez', email:'emily.rodriguez@enterprise.internal', role:'cert_operator', department:'DevOps', permissions:['renew','deploy','view_assigned'], created_at:new Date(Date.now()-90*86400000).toISOString(), status:'active', mfa_enabled:false, last_login:new Date(Date.now()-86400000).toISOString() },
+            { id:'cu-004', name:'David Kim', email:'david.kim@enterprise.internal', role:'cert_viewer', department:'Compliance', permissions:['view_all','audit'], created_at:new Date(Date.now()-60*86400000).toISOString(), status:'active', mfa_enabled:true, last_login:new Date(Date.now()-3*86400000).toISOString() },
+            { id:'cu-005', name:'James Patel', email:'james.patel@enterprise.internal', role:'cert_requester', department:'Development', permissions:['request','view_assigned'], created_at:new Date(Date.now()-30*86400000).toISOString(), status:'active', mfa_enabled:false, last_login:new Date(Date.now()-2*86400000).toISOString() }
+        ];
+        global.certRoles = [
+            { id:'role-01', name:'cert_admin', display_name:'Certificate Administrator', description:'Full access to all certificate operations', permissions:['issue','renew','revoke','deploy','view_all','manage_templates','manage_users','audit','delete'], user_count:1, color:'#ef4444' },
+            { id:'role-02', name:'cert_manager', display_name:'Certificate Manager', description:'Issue, renew, deploy certificates', permissions:['issue','renew','deploy','view_all'], user_count:1, color:'#f97316' },
+            { id:'role-03', name:'cert_operator', display_name:'Certificate Operator', description:'Renew and deploy assigned certificates', permissions:['renew','deploy','view_assigned'], user_count:1, color:'#eab308' },
+            { id:'role-04', name:'cert_viewer', display_name:'Certificate Viewer', description:'Read-only access to inventory and audit logs', permissions:['view_all','audit'], user_count:1, color:'#3b82f6' },
+            { id:'role-05', name:'cert_requester', display_name:'Certificate Requester', description:'Submit requests and view own certificates', permissions:['request','view_assigned'], user_count:1, color:'#8b5cf6' }
+        ];
+        global.certTemplates = [
+            { id:'tmpl-01', name:'Standard Internal TLS', description:'Internal services — RSA 2048, 1-year, enterprise CA', cert_type:'single', key_algorithm:'RSA', key_size:2048, validity_days:365, validation_level:'IV', ca_provider:'enterprise-pki', environment:'prod', auto_renew:true, san_pattern:'*.internal', tags:['internal'], created_by:'sarah.chen@enterprise.internal', created_at:new Date(Date.now()-180*86400000).toISOString(), usage_count:12 },
+            { id:'tmpl-02', name:'Public Wildcard OV', description:'Production wildcard — RSA 2048, DigiCert OV, 1-year', cert_type:'wildcard', key_algorithm:'RSA', key_size:2048, validity_days:365, validation_level:'OV', ca_provider:'digicert', environment:'prod', auto_renew:true, san_pattern:'*.enterprise.com', tags:['production','wildcard'], created_by:'sarah.chen@enterprise.internal', created_at:new Date(Date.now()-120*86400000).toISOString(), usage_count:5 },
+            { id:"tmpl-03", name:"API ECDSA High Performance", description:"API endpoints - ECDSA P-256, Lets Encrypt, 90-day", cert_type:'single', key_algorithm:'ECDSA', key_size:256, validity_days:90, validation_level:'DV', ca_provider:'letsencrypt', environment:'prod', auto_renew:true, san_pattern:'api.*.enterprise.com', tags:['api','performance'], created_by:'marcus.johnson@enterprise.internal', created_at:new Date(Date.now()-90*86400000).toISOString(), usage_count:8 },
+            { id:'tmpl-04', name:'PCI-DSS EV Payment', description:'Payment systems — RSA 4096, DigiCert EV, 2-year', cert_type:'ev', key_algorithm:'RSA', key_size:4096, validity_days:730, validation_level:'EV', ca_provider:'digicert', environment:'prod', auto_renew:false, san_pattern:'payments.enterprise.com', tags:['payments','pci-dss','ev'], created_by:'sarah.chen@enterprise.internal', created_at:new Date(Date.now()-60*86400000).toISOString(), usage_count:2 },
+            { id:'tmpl-05', name:'mTLS Service Mesh', description:'Internal service mesh — ECDSA P-384, Private CA, 1-year', cert_type:'mtls', key_algorithm:'ECDSA', key_size:384, validity_days:365, validation_level:'IV', ca_provider:'enterprise-pki', environment:'prod', auto_renew:true, san_pattern:'*.service-mesh.enterprise.internal', tags:['mtls','mesh'], created_by:'marcus.johnson@enterprise.internal', created_at:new Date(Date.now()-45*86400000).toISOString(), usage_count:3 }
+        ];
+        global.certDocuments = [
+            { id:'doc-01', cert_id:'cert-01', filename:'wildcard-enterprise-internal.pem', file_type:'certificate', file_size:4096, mime_type:'application/x-pem-file', uploaded_by:'sarah.chen@enterprise.internal', uploaded_at:new Date(Date.now()-323*86400000).toISOString(), checksum:'sha256:a1b2c3d4e5f6a7b8', storage_path:'/certs/prod/cert-01/certificate.pem', is_private_key:false, download_count:3 },
+            { id:'doc-02', cert_id:'cert-01', filename:'wildcard-chain.pem', file_type:'chain', file_size:8192, mime_type:'application/x-pem-file', uploaded_by:'sarah.chen@enterprise.internal', uploaded_at:new Date(Date.now()-323*86400000).toISOString(), checksum:'sha256:b2c3d4e5f6a7b8c9', storage_path:'/certs/prod/cert-01/chain.pem', is_private_key:false, download_count:3 },
+            { id:'doc-03', cert_id:'cert-04', filename:'payments-ev-cert.pem', file_type:'certificate', file_size:4096, mime_type:'application/x-pem-file', uploaded_by:'security@enterprise.internal', uploaded_at:new Date(Date.now()-178*86400000).toISOString(), checksum:'sha256:c3d4e5f6a7b8c9d0', storage_path:'/certs/prod/cert-04/certificate.pem', is_private_key:false, download_count:1 },
+            { id:'doc-04', cert_id:'cert-07', filename:'code-signing.p12', file_type:'pkcs12', file_size:12288, mime_type:'application/x-pkcs12', uploaded_by:'devops@enterprise.internal', uploaded_at:new Date(Date.now()-274*86400000).toISOString(), checksum:'sha256:d4e5f6a7b8c9d0e1', storage_path:'/certs/prod/cert-07/codesigning.p12', is_private_key:false, download_count:5 }
+        ];
+        global.certAuditLog = [
+            { id:'ca-001', cert_id:'cert-01', action:'issued', actor:'sarah.chen@enterprise.internal', actor_role:'cert_admin', timestamp:new Date(Date.now()-323*86400000).toISOString(), details:'Certificate issued via DigiCert API. Order: ORD-2024-001', ip_address:'10.125.4.68', result:'success', risk_level:'low' },
+            { id:'ca-002', cert_id:'cert-01', action:'deployed', actor:'system-scheduler', actor_role:'system', timestamp:new Date(Date.now()-322*86400000).toISOString(), details:'Auto-deployed to AWS ALB and K8s ingress. Endpoints verified.', ip_address:'10.125.4.10', result:'success', risk_level:'low' },
+            { id:'ca-003', cert_id:'cert-02', action:'expiry_alert', actor:'system-monitor', actor_role:'system', timestamp:new Date(Date.now()-3600000).toISOString(), details:'Certificate expiring in 12 days. Auto-renewal triggered.', ip_address:'10.125.4.10', result:'success', risk_level:'medium' },
+            { id:'ca-004', cert_id:'cert-09', action:'expired', actor:'system-monitor', actor_role:'system', timestamp:new Date(Date.now()-3600000).toISOString(), details:'Certificate vpn.enterprise.com has expired. Immediate renewal required.', ip_address:'10.125.4.10', result:'warning', risk_level:'critical' },
+            { id:'ca-005', cert_id:'cert-04', action:'viewed', actor:'david.kim@enterprise.internal', actor_role:'cert_viewer', timestamp:new Date(Date.now()-7200000).toISOString(), details:'PCI-DSS compliance audit access.', ip_address:'10.125.4.90', result:'success', risk_level:'low' },
+            { id:'ca-006', cert_id:'cert-08', action:'renewal_started', actor:'system-scheduler', actor_role:'system', timestamp:new Date(Date.now()-1800000).toISOString(), details:'Automatic renewal started. 5 days remaining. ACME challenge initiated.', ip_address:'10.125.4.10', result:'success', risk_level:'medium' }
+        ];
+        global.certNotifications = [
+            { id:'notif-01', cert_id:'cert-02', type:'expiry_warning', severity:'high', title:'Certificate Expiring in 12 Days', message:'api-uat.enterprise.internal expires soon. Auto-renewal enabled.', recipients:['api@enterprise.internal','marcus.johnson@enterprise.internal'], channels:['email','slack'], sent_at:new Date(Date.now()-3600000).toISOString(), acknowledged:false, action_required:false },
+            { id:'notif-02', cert_id:'cert-08', type:'expiry_critical', severity:'critical', title:'Certificate Expiring in 5 Days — Action Required', message:'api.enterprise.com expires in 5 days. Auto-renewal in progress.', recipients:['api@enterprise.internal','sarah.chen@enterprise.internal'], channels:['email','slack','pagerduty'], sent_at:new Date(Date.now()-900000).toISOString(), acknowledged:false, action_required:true },
+            { id:'notif-03', cert_id:'cert-09', type:'expired', severity:'critical', title:'Certificate EXPIRED', message:'vpn.enterprise.com certificate has expired.', recipients:['network@enterprise.internal','sarah.chen@enterprise.internal'], channels:['email','slack','pagerduty','sms'], sent_at:new Date(Date.now()-600000).toISOString(), acknowledged:false, action_required:true },
+            { id:'notif-04', cert_id:'cert-05', type:'expiry_warning', severity:'medium', title:'Certificate Expiring in 62 Days', message:'service-mesh certificate expires in 62 days.', recipients:['platform@enterprise.internal'], channels:['email'], sent_at:new Date(Date.now()-86400000).toISOString(), acknowledged:true, action_required:false }
+        ];
+        global.certRenewalQueue = [
+            { id:'renew-01', cert_id:'cert-02', domain:'api-uat.enterprise.internal', priority:'high', scheduled_at:new Date(Date.now()-3600000).toISOString(), status:'pending', ca_provider:'letsencrypt', auto_deploy:true, initiated_by:'scheduler', estimated_completion:new Date(Date.now()+3600000).toISOString() },
+            { id:'renew-02', cert_id:'cert-08', domain:'api.enterprise.com', priority:'critical', scheduled_at:new Date().toISOString(), status:'in_progress', ca_provider:'letsencrypt', auto_deploy:true, initiated_by:'scheduler', estimated_completion:new Date(Date.now()+1800000).toISOString() },
+            { id:'renew-03', cert_id:'cert-05', domain:'service-mesh.enterprise.internal', priority:'medium', scheduled_at:new Date(Date.now()+86400000).toISOString(), status:'scheduled', ca_provider:'enterprise-pki', auto_deploy:false, initiated_by:'admin@enterprise.internal', estimated_completion:new Date(Date.now()+90000000).toISOString() }
+        ];
+    }
+    var certUsers = global.certUsers || [];
+    var certRoles = global.certRoles || [];
+    var certTemplates = global.certTemplates || [];
+    var certDocuments = global.certDocuments || [];
+    var certAuditLog = global.certAuditLog || [];
+    var certNotifications = global.certNotifications || [];
+    var certRenewalQueue = global.certRenewalQueue || [];
+
+    // Statistics helper
+    function getCertStats() {
+        var t=mockCerts.length, a=mockCerts.filter(function(c){return c.status==='active';}).length, e=mockCerts.filter(function(c){return c.status==='expiring_soon'||(c.days_left>0&&c.days_left<=30);}).length, x=mockCerts.filter(function(c){return c.status==='expired'||c.days_left<=0;}).length;
+        var bt={},be={},bc={};
+        mockCerts.forEach(function(c){bt[c.cert_type||'single']=(bt[c.cert_type||'single']||0)+1; be[c.environment||'prod']=(be[c.environment||'prod']||0)+1; bc[c.ca_provider||'unknown']=(bc[c.ca_provider||'unknown']||0)+1;});
+        return {total:t, active:a, expiring:e, expired:x, revoked:mockCerts.filter(function(c){return c.status==='revoked';}).length, compliance_rate:Math.round((a/t)*100), avg_days_to_expiry:Math.round(mockCerts.reduce(function(s,c){return s+(c.days_left||0);},0)/t), auto_renew_enabled:mockCerts.filter(function(c){return c.auto_renew;}).length, by_type:bt, by_environment:be, by_ca:bc};
+    }
+
+    // --- CERTIFICATE SYSTEM API ROUTES ---
+
+    if (pathname === '/api/v1/certificates/statistics' || pathname === '/api/v1/cert-statistics') {
+        res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(getCertStats())); return true;
+    }
+    if (pathname.startsWith('/api/v1/certificates/expiring')) {
+        var days=parseInt(parsed.searchParams.get('days')||'30'); var exp=mockCerts.filter(function(c){return c.days_left>=0&&c.days_left<=days;});
+        res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({certificates:exp, total:exp.length, threshold_days:days})); return true;
+    }
+    if (pathname.startsWith('/api/v1/certificates/search')) {
+        var q=(parsed.searchParams.get('q')||'').toLowerCase(); var r=q?mockCerts.filter(function(c){return (c.domain||'').toLowerCase().includes(q)||(c.issuer||'').toLowerCase().includes(q)||(c.environment||'').toLowerCase().includes(q)||(c.ca_provider||'').toLowerCase().includes(q)||(c.tags||[]).some(function(t){return t.toLowerCase().includes(q);});}):mockCerts;
+        res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({certificates:r, total:r.length, query:q})); return true;
+    }
+    if (pathname === '/api/v1/certificates/dashboard') {
+        var s=getCertStats();
+        res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({statistics:s, expiring_soon:mockCerts.filter(function(c){return c.days_left>=0&&c.days_left<=30;}), critical_alerts:certNotifications.filter(function(n){return n.severity==='critical'&&!n.acknowledged;}), renewal_queue:certRenewalQueue.filter(function(r){return r.status==='in_progress'||r.status==='pending';}), recent_audit:certAuditLog.slice(0,5), compliance_summary:{total:mockCerts.length, compliant:mockCerts.filter(function(c){return c.status==='active';}).length, warning:mockCerts.filter(function(c){return c.status==='expiring_soon';}).length, non_compliant:mockCerts.filter(function(c){return c.status==='expired'||c.status==='revoked';}).length}})); return true;
+    }
+    if (pathname === '/api/v1/certificates/export') {
+        var fmt=parsed.searchParams.get('format')||'json';
+        if (fmt==='csv') { var hdr='id,domain,cert_type,status,issuer,days_left,environment,key_algorithm,validation_level,auto_renew,owner_team,not_after'; var rows=mockCerts.map(function(c){return [c.id,c.domain,c.cert_type||'single',c.status,c.issuer,c.days_left,c.environment,c.key_algorithm,c.validation_level||'DV',c.auto_renew,c.owner_team||'IT',c.not_after].join(',');}); res.writeHead(200,{'Content-Type':'text/csv'}); res.end([hdr].concat(rows).join('\\n')); }
+        else { res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({exported_at:new Date().toISOString(), total:mockCerts.length, certificates:mockCerts})); }
+        return true;
+    }
+
+    // Certificate sub-resource actions (must come BEFORE generic /:id)
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+\/documents$/) && req.method==='GET') {
+        var cid=pathname.split('/')[4]; var docs=certDocuments.filter(function(d){return d.cert_id===cid;});
+        res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({documents:docs, total:docs.length})); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+\/documents$/) && req.method==='POST') {
+        var cid=pathname.split('/')[4]; var body=''; req.on('data',function(c){body+=c;}); req.on('end',function(){
+            var input={}; try{input=JSON.parse(body);}catch(e){}
+            var doc={id:'doc-'+Date.now(), cert_id:cid, filename:input.filename||'certificate.pem', file_type:input.file_type||'certificate', file_size:input.file_size||4096, mime_type:input.mime_type||'application/x-pem-file', uploaded_by:input.uploaded_by||'admin@enterprise.internal', uploaded_at:new Date().toISOString(), checksum:'sha256:'+Math.random().toString(36).substring(2,34), storage_path:'/certs/prod/'+cid+'/'+(input.filename||'certificate.pem'), is_private_key:input.is_private_key===true, download_count:0};
+            certDocuments.push(doc);
+            certAuditLog.unshift({id:'ca-'+Date.now(), cert_id:cid, action:'document_uploaded', actor:doc.uploaded_by, actor_role:'cert_operator', timestamp:new Date().toISOString(), details:'Document uploaded: '+doc.filename, ip_address:'10.125.4.68', result:'success', risk_level:'low'});
+            res.writeHead(201, {'Content-Type':'application/json'}); res.end(JSON.stringify({document:doc, message:'Document uploaded successfully'}));
+        }); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+\/documents\/[^\/]+$/) && req.method==='DELETE') {
+        var docId=pathname.split('/').pop(); var idx=certDocuments.findIndex(function(d){return d.id===docId;});
+        if (idx>=0) certDocuments.splice(idx,1);
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true, message:'Document deleted'})); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+\/renew$/) && req.method==='POST') {
+        var cid=pathname.split('/')[4]; var cert=mockCerts.find(function(c){return c.id===cid;});
+        if (cert) { cert.status='renewing'; cert.renewal_count=(cert.renewal_count||0)+1; }
+        certAuditLog.unshift({id:'ca-'+Date.now(), cert_id:cid, action:'renewal_started', actor:'admin@enterprise.internal', actor_role:'cert_admin', timestamp:new Date().toISOString(), details:'Manual renewal initiated for '+(cert?cert.domain:'unknown'), ip_address:'10.125.4.68', result:'success', risk_level:'medium'});
+        certRenewalQueue.push({id:'renew-'+Date.now(), cert_id:cid, domain:cert?cert.domain:'unknown', priority:'high', scheduled_at:new Date().toISOString(), status:'in_progress', ca_provider:cert?cert.ca_provider:'letsencrypt', auto_deploy:true, initiated_by:'admin@enterprise.internal', estimated_completion:new Date(Date.now()+3600000).toISOString()});
+        res.writeHead(202,{'Content-Type':'application/json'}); res.end(JSON.stringify({cert_id:cid, status:'renewal_started', renewal_id:'renew-'+Date.now(), message:'Certificate renewal process initiated', estimated_completion:new Date(Date.now()+3600000).toISOString()})); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+\/revoke$/) && req.method==='POST') {
+        var cid=pathname.split('/')[4]; var body=''; req.on('data',function(c){body+=c;}); req.on('end',function(){
+            var input={}; try{input=JSON.parse(body);}catch(e){}
+            var cert=mockCerts.find(function(c){return c.id===cid;});
+            if (cert) { cert.status='revoked'; cert.revoked_at=new Date().toISOString(); cert.revocation_reason=input.reason||'key_compromise'; }
+            certAuditLog.unshift({id:'ca-'+Date.now(), cert_id:cid, action:'revoked', actor:'admin@enterprise.internal', actor_role:'cert_admin', timestamp:new Date().toISOString(), details:'Certificate revoked. Reason: '+(input.reason||'key_compromise'), ip_address:'10.125.4.68', result:'success', risk_level:'high'});
+            res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({cert_id:cid, status:'revoked', revoked_at:new Date().toISOString(), reason:input.reason||'key_compromise', message:'Certificate revoked and added to CRL'}));
+        }); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+\/verify$/) && req.method==='POST') {
+        var cid=pathname.split('/')[4]; var cert=mockCerts.find(function(c){return c.id===cid;});
+        var result=cert&&cert.status!=='expired'&&cert.status!=='revoked'?'pass':'fail';
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({verification:{cert_id:cid, verified_at:new Date().toISOString(), method:'tls_handshake', result:result, endpoint:(cert?cert.domain:'unknown')+':443', tls_version:'TLS 1.3', cipher_suite:'TLS_AES_256_GCM_SHA384'}, chain_valid:result==='pass', ocsp_status:result==='pass'?'good':'revoked', subject_match:true, san_match:true})); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+\/qr$/) && req.method==='GET') {
+        var cid=pathname.split('/')[4]; var cert=mockCerts.find(function(c){return c.id===cid;});
+        var verUrl='https://verify.enterprise.internal/cert/'+cid;
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({cert_id:cid, qr_url:verUrl, qr_data:{url:verUrl, domain:cert?cert.domain:'unknown', serial:cert?cert.serial_number:'N/A', fingerprint:cert?cert.fingerprint:'N/A', not_after:cert?cert.not_after:'N/A', issuer:cert?cert.issuer:'N/A'}, verification_url:verUrl})); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+\/fingerprint$/) && req.method==='GET') {
+        var cid=pathname.split('/')[4]; var cert=mockCerts.find(function(c){return c.id===cid;});
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({cert_id:cid, sha1:'AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01', sha256:cert?cert.fingerprint:'SHA256:UNKNOWN', domain:cert?cert.domain:'unknown', serial:cert?cert.serial_number:'N/A'})); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+\/audit$/) && req.method==='GET') {
+        var cid=pathname.split('/')[4]; var logs=certAuditLog.filter(function(l){return l.cert_id===cid;});
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({cert_id:cid, logs:logs, total:logs.length})); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+\/deploy$/) && req.method==='POST') {
+        var cid=pathname.split('/')[4]; var body=''; req.on('data',function(c){body+=c;}); req.on('end',function(){
+            var input={}; try{input=JSON.parse(body);}catch(e){}
+            var cert=mockCerts.find(function(c){return c.id===cid;});
+            if (cert) cert.last_deployed_at=new Date().toISOString();
+            certAuditLog.unshift({id:'ca-'+Date.now(), cert_id:cid, action:'deployed', actor:'admin@enterprise.internal', actor_role:'cert_admin', timestamp:new Date().toISOString(), details:'Deployed to: '+(input.targets||['target-01']).join(', '), ip_address:'10.125.4.68', result:'success', risk_level:'low'});
+            res.writeHead(202,{'Content-Type':'application/json'}); res.end(JSON.stringify({cert_id:cid, deploy_id:'deploy-'+Date.now(), targets:input.targets||[], status:'deploying', message:'Certificate deployment initiated', estimated_completion:new Date(Date.now()+600000).toISOString()}));
+        }); return true;
+    }
+
+    // Certificate users CRUD
+    if (pathname === '/api/v1/cert-users') {
+        if (req.method==='POST') { var body=''; req.on('data',function(c){body+=c;}); req.on('end',function(){ var input={}; try{input=JSON.parse(body);}catch(e){} var newU={id:'cu-'+Date.now(), name:input.name||'New User', email:input.email||'user@enterprise.internal', role:input.role||'cert_viewer', department:input.department||'IT', permissions:(certRoles.find(function(r){return r.name===input.role;})||certRoles[3]).permissions, created_at:new Date().toISOString(), status:'active', mfa_enabled:false, last_login:null}; certUsers.push(newU); res.writeHead(201,{'Content-Type':'application/json'}); res.end(JSON.stringify(newU)); }); return true; }
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({users:certUsers, total:certUsers.length})); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/cert-users\/[^\/]+$/) && req.method==='DELETE') {
+        var uid=pathname.split('/').pop(); var idx=certUsers.findIndex(function(u){return u.id===uid;}); if (idx>=0) certUsers.splice(idx,1);
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true})); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/cert-users\/[^\/]+$/) && (req.method==='PUT'||req.method==='PATCH')) {
+        var uid=pathname.split('/').pop(); var body=''; req.on('data',function(c){body+=c;}); req.on('end',function(){ var input={}; try{input=JSON.parse(body);}catch(e){} var user=certUsers.find(function(u){return u.id===uid;}); if(user) Object.assign(user,input); res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify(user||{error:'not found'})); }); return true;
+    }
+
+    // Certificate roles
+    if (pathname === '/api/v1/cert-roles') {
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({roles:certRoles, total:certRoles.length})); return true;
+    }
+
+    // Certificate templates CRUD
+    if (pathname === '/api/v1/cert-templates') {
+        if (req.method==='POST') { var body=''; req.on('data',function(c){body+=c;}); req.on('end',function(){ var input={}; try{input=JSON.parse(body);}catch(e){} var t={id:'tmpl-'+Date.now(), name:input.name||'New Template', description:input.description||'', cert_type:input.cert_type||'single', key_algorithm:input.key_algorithm||'RSA', key_size:input.key_size||2048, validity_days:input.validity_days||365, validation_level:input.validation_level||'DV', ca_provider:input.ca_provider||'letsencrypt', environment:input.environment||'prod', auto_renew:input.auto_renew!==false, tags:input.tags||[], created_by:'admin@enterprise.internal', created_at:new Date().toISOString(), usage_count:0}; certTemplates.push(t); res.writeHead(201,{'Content-Type':'application/json'}); res.end(JSON.stringify(t)); }); return true; }
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({templates:certTemplates, total:certTemplates.length})); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/cert-templates\/[^\/]+$/) && req.method==='DELETE') {
+        var tid=pathname.split('/').pop(); var idx=certTemplates.findIndex(function(t){return t.id===tid;}); if(idx>=0) certTemplates.splice(idx,1);
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true})); return true;
+    }
+
+    // Certificate notifications
+    if (pathname === '/api/v1/cert-notifications') {
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({notifications:certNotifications, total:certNotifications.length, unacknowledged:certNotifications.filter(function(n){return !n.acknowledged;}).length})); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/cert-notifications\/[^\/]+\/acknowledge$/) && req.method==='POST') {
+        var nid=pathname.split('/')[4]; var n=certNotifications.find(function(x){return x.id===nid;}); if(n){n.acknowledged=true; n.acknowledged_at=new Date().toISOString();}
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true, notification:n})); return true;
+    }
+    if (pathname === '/api/v1/cert-notifications/test' && req.method==='POST') {
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true, message:'Test notification sent', channels:['email','slack','webhook']})); return true;
+    }
+
+    // Certificate audit log
+    if (pathname === '/api/v1/cert-audit') {
+        var logs=certAuditLog; var cid=parsed.searchParams.get('cert_id'); var act=parsed.searchParams.get('action'); if(cid) logs=logs.filter(function(l){return l.cert_id===cid;}); if(act) logs=logs.filter(function(l){return l.action===act;});
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({logs:logs, total:logs.length})); return true;
+    }
+
+    // Certificate tracking
+    if (pathname === '/api/v1/cert-tracking') {
+        var tracking=mockCerts.map(function(c){return {cert_id:c.id, domain:c.domain, environment:c.environment, status:c.status, days_left:c.days_left, auto_renew:c.auto_renew, last_verified:new Date(Date.now()-Math.random()*7200000).toISOString(), last_deployed:c.last_deployed_at||null, deployment_count:(c.deployment_targets||[]).length, compliance_status:c.status==='active'?'compliant':c.status==='expiring_soon'?'warning':'non-compliant', owner_team:c.owner_team||'Unknown', risk_score:c.days_left<=0?100:c.days_left<=7?90:c.days_left<=30?60:10};});
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({tracking:tracking, total:tracking.length})); return true;
+    }
+
+    // Renewal queue
+    if (pathname === '/api/v1/cert-renewal-queue') {
+        if (req.method==='POST') { var body=''; req.on('data',function(c){body+=c;}); req.on('end',function(){ var input={}; try{input=JSON.parse(body);}catch(e){} var item={id:'renew-'+Date.now(), cert_id:input.cert_id, domain:input.domain||'unknown', priority:input.priority||'medium', scheduled_at:input.scheduled_at||new Date().toISOString(), status:'scheduled', ca_provider:input.ca_provider||'letsencrypt', auto_deploy:input.auto_deploy!==false, initiated_by:input.initiated_by||'admin@enterprise.internal', estimated_completion:new Date(Date.now()+3600000).toISOString()}; certRenewalQueue.push(item); res.writeHead(201,{'Content-Type':'application/json'}); res.end(JSON.stringify(item)); }); return true; }
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({queue:certRenewalQueue, total:certRenewalQueue.length})); return true;
+    }
+
+    // Bulk upload
+    if (pathname === '/api/v1/certificates/bulk-upload' && req.method==='POST') {
+        var body=''; req.on('data',function(c){body+=c;}); req.on('end',function(){
+            var input={}; try{input=JSON.parse(body);}catch(e){}
+            var items=input.certificates||[]; var imported=items.map(function(item,i){ var c={id:'cert-bulk-'+Date.now()+'-'+i, cert_type:'single', domain:item.domain||'uploaded-'+i+'.enterprise.internal', subject:'CN='+(item.domain||'uploaded-'+i+'.enterprise.internal'), issuer:item.issuer||'Unknown CA', serial_number:item.serial_number||'00:00:00:00:00:00:00:0'+i, fingerprint:'SHA256:'+Math.random().toString(16).substring(2,66).toUpperCase(), sans:item.sans||[], days_left:item.days_left||365, status:'active', key_algorithm:item.key_algorithm||'RSA', key_size:item.key_size||2048, is_self_signed:false, environment:item.environment||'prod', validation_level:item.validation_level||'DV', ca_provider:item.ca_provider||'unknown', owner_team:item.owner_team||'IT', owner_email:item.owner_email||'it@enterprise.internal', tags:item.tags||[], auto_renew:item.auto_renew!==false, renewal_count:0, qr_code:'https://verify.enterprise.internal/cert/cert-bulk-'+i, verification_url:'https://verify.enterprise.internal/cert/cert-bulk-'+i, not_before:new Date().toISOString(), not_after:new Date(Date.now()+(item.days_left||365)*86400000).toISOString(), created_at:new Date().toISOString()}; mockCerts.push(c); return c; });
+            certAuditLog.unshift({id:'ca-'+Date.now(), cert_id:'bulk', action:'bulk_imported', actor:'admin@enterprise.internal', actor_role:'cert_admin', timestamp:new Date().toISOString(), details:imported.length+' certificates imported via bulk upload', ip_address:'10.125.4.68', result:'success', risk_level:'medium'});
+            res.writeHead(201,{'Content-Type':'application/json'}); res.end(JSON.stringify({imported:imported.length, failed:0, certificates:imported, message:imported.length+' certificates imported successfully'}));
+        }); return true;
+    }
+
+    // Certificate authentication & security
+    if (pathname === '/api/v1/cert-auth/login' && req.method==='POST') {
+        var body=''; req.on('data',function(c){body+=c;}); req.on('end',function(){
+            var input={}; try{input=JSON.parse(body);}catch(e){}
+            var user=certUsers.find(function(u){return u.email===input.email;})||certUsers[0];
+            certAuditLog.unshift({id:'ca-'+Date.now(), cert_id:'system', action:'login', actor:user.email, actor_role:user.role, timestamp:new Date().toISOString(), details:'User authenticated to CMS', ip_address:'10.125.4.68', result:'success', risk_level:'low'});
+            res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({access_token:'cert-jwt-'+Date.now(), token_type:'Bearer', expires_in:3600, user:{id:user.id, name:user.name, email:user.email, role:user.role, permissions:user.permissions}, mfa_required:user.mfa_enabled}));
+        }); return true;
+    }
+    if (pathname === '/api/v1/cert-auth/logout' && req.method==='POST') {
+        certAuditLog.unshift({id:'ca-'+Date.now(), cert_id:'system', action:'logout', actor:'admin@enterprise.internal', actor_role:'cert_admin', timestamp:new Date().toISOString(), details:'User session terminated', ip_address:'10.125.4.68', result:'success', risk_level:'low'});
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true, message:'Session terminated successfully'})); return true;
+    }
+    if (pathname === '/api/v1/cert-auth/mfa/verify' && req.method==='POST') {
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true, mfa_verified:true, access_token:'cert-jwt-mfa-'+Date.now()})); return true;
+    }
+    if (pathname === '/api/v1/cert-auth/permissions') {
+        var user=certUsers[0];
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({user:{email:user.email, role:user.role, name:user.name}, permissions:user.permissions, all_permissions:['issue','renew','revoke','deploy','view_all','view_assigned','manage_templates','manage_users','audit','delete','request','bulk_import','export']})); return true;
+    }
+
+    // Certificate metadata update and delete
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+$/) && req.method==='PUT') {
+        var cid=pathname.split('/').pop(); var body=''; req.on('data',function(c){body+=c;}); req.on('end',function(){
+            var input={}; try{input=JSON.parse(body);}catch(e){} var cert=mockCerts.find(function(c){return c.id===cid;});
+            if (cert) { if(input.tags) cert.tags=input.tags; if(input.owner_team) cert.owner_team=input.owner_team; if(input.owner_email) cert.owner_email=input.owner_email; if(input.auto_renew!==undefined) cert.auto_renew=input.auto_renew; if(input.deployment_targets) cert.deployment_targets=input.deployment_targets; cert.updated_at=new Date().toISOString(); certAuditLog.unshift({id:'ca-'+Date.now(), cert_id:cid, action:'metadata_updated', actor:'admin@enterprise.internal', actor_role:'cert_admin', timestamp:new Date().toISOString(), details:'Certificate metadata updated', ip_address:'10.125.4.68', result:'success', risk_level:'low'}); }
+            res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify(cert||{error:'not found'}));
+        }); return true;
+    }
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+$/) && req.method==='DELETE') {
+        var cid=pathname.split('/').pop(); var cert=mockCerts.find(function(c){return c.id===cid;});
+        if (cert) { cert.status='archived'; cert.archived_at=new Date().toISOString(); }
+        certAuditLog.unshift({id:'ca-'+Date.now(), cert_id:cid, action:'archived', actor:'admin@enterprise.internal', actor_role:'cert_admin', timestamp:new Date().toISOString(), details:'Certificate archived', ip_address:'10.125.4.68', result:'success', risk_level:'medium'});
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true, cert_id:cid, status:'archived', message:'Certificate archived successfully'})); return true;
+    }
+
+    // Enhanced GET certificate by ID with documents and audit
+    if (pathname.match(/^\/api\/v1\/certificates\/[^\/]+$/) && !pathname.includes('issue') && req.method==='GET') {
+        var cid=pathname.split('/').pop(); var cert=mockCerts.find(function(c){return c.id===cid;})||{...mockCerts[0], id:cid};
+        var docs=certDocuments.filter(function(d){return d.cert_id===cid;});
+        var auditEntries=certAuditLog.filter(function(l){return l.cert_id===cid;}).slice(0,10);
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({...cert, documents:docs, recent_audit:auditEntries, verification_status:cert.status==='active'?'verified':'unverified'})); return true;
+    }
+
     // --------------------------------------------------------------------------
     // -----------------------------------------------------------------------
     // GATEWAY PORTAL API ROUTES (Certificate Lifecycle Management)
