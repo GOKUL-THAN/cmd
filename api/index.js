@@ -1,42 +1,44 @@
-// Vercel Serverless Function - CLM API Entrypoint
-// Routes all /api/v1/*, /auth/*, /health requests to dev-server mock engine
+﻿// CLM Vercel API Bridge — delegates all /api/* requests to the mock API handler
+// dev-server.js uses `require.main === module` so requiring it here does NOT
+// start the HTTP servers; only handleMockAPI is used.
+'use strict';
+
 const { handleMockAPI } = require('../dev-server.js');
 
 module.exports = (req, res) => {
-    // CORS
+    // CORS — required for browser clients calling the API
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Agent-Secret, X-Test-Bypass-RateLimit, X-Requested-With');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-CSRF-Token, X-Agent-Secret');
+    res.setHeader('Cache-Control', 'no-store');
 
+    // Handle CORS preflight
     if (req.method === 'OPTIONS') {
-        res.writeHead(204); res.end(); return;
+        res.writeHead(204);
+        res.end();
+        return;
     }
 
-    // Restore original path from Vercel rewrite headers
-    // x-matched-path contains the original request path before rewriting
+    // Vercel sets x-matched-path to the original URL before rewriting.
+    // Restore it so pathname-based routing in handleMockAPI works correctly.
     const matchedPath = req.headers['x-matched-path'];
-    const nowRoute = req.headers['x-now-route-matches'];
-    if (matchedPath && matchedPath !== '/api/index.js' && matchedPath !== '/api/') {
-        req.url = matchedPath + (req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '');
-    } else if (req.url === '/api/index.js' || req.url === '/api/' || req.url === '/api') {
-        // Try other headers
-        const original = req.headers['x-invoke-path'] || req.headers['x-original-url'] || req.url;
-        if (original && original !== '/api/index.js') req.url = original;
+    if (matchedPath && matchedPath !== '/api/index.js') {
+        const qs = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
+        req.url = matchedPath + qs;
     }
 
-    // Handle pre-parsed body (Vercel Node runtime may parse body before stream)
+    // Vercel pre-parses the request body into req.body. Replay it as a stream
+    // so handlers that do `req.on('data', ...)` receive the bytes correctly.
     if (req.body !== undefined) {
-        const bodyData = typeof req.body === 'string'
-            ? req.body
-            : (Buffer.isBuffer(req.body) ? req.body.toString('utf8') : JSON.stringify(req.body));
-
-        req.headers['content-length'] = Buffer.byteLength(bodyData).toString();
-        const origOn = req.on ? req.on.bind(req) : null;
-        req.on = function(event, handler) {
+        const bodyData = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+        const bodyBuffer = Buffer.from(bodyData, 'utf8');
+        req.headers['content-length'] = bodyBuffer.length.toString();
+        const origOn = typeof req.on === 'function' ? req.on.bind(req) : null;
+        req.on = function (event, handler) {
             if (event === 'data') {
-                process.nextTick(() => { try { handler(bodyData); } catch(e) {} });
+                process.nextTick(() => { try { handler(bodyBuffer); } catch (e) {} });
             } else if (event === 'end') {
-                process.nextTick(() => { try { handler(); } catch(e) {} });
+                process.nextTick(() => { try { handler(); } catch (e) {} });
             } else if (origOn) {
                 origOn(event, handler);
             }
@@ -44,18 +46,24 @@ module.exports = (req, res) => {
         };
     }
 
-    // Delegate to dev-server mock engine
     try {
         const handled = handleMockAPI(req, res);
         if (!handled) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Not Found', path: req.url, method: req.method }));
+            res.end(JSON.stringify({
+                error: 'Not Found',
+                path: req.url,
+                method: req.method
+            }));
         }
-    } catch(err) {
+    } catch (err) {
         console.error('[CLM API Error]', err.message, req.method, req.url);
         if (!res.headersSent) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Internal Server Error', message: err.message }));
+            res.end(JSON.stringify({
+                error: 'Internal Server Error',
+                message: err.message
+            }));
         }
     }
 };

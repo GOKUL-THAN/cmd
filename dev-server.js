@@ -1,4 +1,4 @@
-// ==============================================================================
+﻿// ==============================================================================
 // CLM Unified Development Web Server
 // ==============================================================================
 // Serves both CLM web portals and provides lightweight mock APIs for instant
@@ -1351,7 +1351,7 @@ function handleMockAPI(req, res) {
     // Health
     if (pathname === '/api/v1/health' || pathname === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: "healthy", mode: "local-dev-mock", timestamp: new Date().toISOString() }));
+        res.end(JSON.stringify({ status: "healthy", version: "4.1.0", mode: "demo", platform: "CLM Enterprise", timestamp: new Date().toISOString() }));
         return true;
     }
 
@@ -2425,7 +2425,7 @@ function handleMockAPI(req, res) {
                     "ignore", "override", "system", "disregard", "bypass", "jailbreak",
                     "dan", "unrestricted mode", "developer unrestricted mode", "developer mode",
                     "base64", "prompt injection", "system prompt", "forget rules",
-                    "ignorar", "ignorieren", "ÃÂ¸ÃÂ³ÃÂ½ÃÂ¾Ã‘â‚¬ÃÂ¸Ã‘â‚¬ÃÂ¾ÃÂ²ÃÂ°Ã‘â€šÃ‘Å’", "Ã¥Â¿Â½Ã§â€¢Â¥", "print previous",
+                    "ignorar", "ignorieren", "ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â³ÃƒÂÃ‚Â½ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¸Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã…â€™", "ÃƒÂ¥Ã‚Â¿Ã‚Â½ÃƒÂ§Ã¢â‚¬Â¢Ã‚Â¥", "print previous",
                     "repeat instructions", "what is your prompt"
                 ];
                 if (injectionPatterns.some(p => q.includes(p) || (b64Decoded && b64Decoded.includes(p)))) {
@@ -2659,7 +2659,7 @@ function handleMockAPI(req, res) {
 
 
     // -----------------------------------------------------------------------
-    // MISSING ROUTES â€” Added for complete demo coverage
+    // MISSING ROUTES Ã¢â‚¬â€ Added for complete demo coverage
     // -----------------------------------------------------------------------
 
     // Users (tenant-scoped)
@@ -2910,10 +2910,10 @@ function handleMockAPI(req, res) {
 
 
     // -----------------------------------------------------------------------
-    // MISSING PARAMETRIC ROUTES â€” FIX FOR MENU FAILURES
+    // MISSING PARAMETRIC ROUTES Ã¢â‚¬â€ FIX FOR MENU FAILURES
     // -----------------------------------------------------------------------
 
-    // Tenant by ID (GET /api/v1/tenants/:id) â€” used by loadSSO, loadOrgTenants
+    // Tenant by ID (GET /api/v1/tenants/:id) Ã¢â‚¬â€ used by loadSSO, loadOrgTenants
     if (pathname.match(/^\/api\/v1\/tenants\/[^/]+$/) && req.method === 'GET') {
         const tenantId = pathname.split('/').pop();
         const tenant = mockTenants.find(t => t.id === tenantId || t.slug === tenantId)
@@ -2923,7 +2923,7 @@ function handleMockAPI(req, res) {
         return true;
     }
 
-    // Tenant me â€” used as fallback when no tenant ID in JWT
+    // Tenant me Ã¢â‚¬â€ used as fallback when no tenant ID in JWT
     if (pathname === '/api/v1/tenants/me') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(mockTenants[0]));
@@ -2950,7 +2950,7 @@ function handleMockAPI(req, res) {
             res.end(JSON.stringify({
                 question: question,
                 answer: 'Based on the contract terms, ' + (question.toLowerCase().includes('payment') ? 'invoices are payable within Net 30 days of receipt via wire transfer in USD.' : question.toLowerCase().includes('terminat') ? 'either party may terminate with 30 days written notice. Immediate termination is permitted for material breach.' : question.toLowerCase().includes('renew') ? 'the contract renews automatically for successive 12-month terms unless either party provides 60-day written notice of non-renewal.' : 'the contract provisions apply as stated in the relevant sections. Please review the specific clauses for detailed terms.'),
-                citations: [{ section: 'Â§4.2 Payment Terms', page: 3 }, { section: 'Â§12.1 Termination', page: 8 }],
+                citations: [{ section: 'Ã‚Â§4.2 Payment Terms', page: 3 }, { section: 'Ã‚Â§12.1 Termination', page: 8 }],
                 confidence: 0.92,
                 generated_at: new Date().toISOString()
             }));
@@ -3587,11 +3587,11 @@ function handleMockAPI(req, res) {
             { id:'role-05', name:'cert_requester', display_name:'Certificate Requester', description:'Submit requests and view own certificates', permissions:['request','view_assigned'], user_count:1, color:'#8b5cf6' }
         ];
         global.certTemplates = [
-            { id:'tmpl-01', name:'Standard Internal TLS', description:'Internal services — RSA 2048, 1-year, enterprise CA', cert_type:'single', key_algorithm:'RSA', key_size:2048, validity_days:365, validation_level:'IV', ca_provider:'enterprise-pki', environment:'prod', auto_renew:true, san_pattern:'*.internal', tags:['internal'], created_by:'sarah.chen@enterprise.internal', created_at:new Date(Date.now()-180*86400000).toISOString(), usage_count:12 },
-            { id:'tmpl-02', name:'Public Wildcard OV', description:'Production wildcard — RSA 2048, DigiCert OV, 1-year', cert_type:'wildcard', key_algorithm:'RSA', key_size:2048, validity_days:365, validation_level:'OV', ca_provider:'digicert', environment:'prod', auto_renew:true, san_pattern:'*.enterprise.com', tags:['production','wildcard'], created_by:'sarah.chen@enterprise.internal', created_at:new Date(Date.now()-120*86400000).toISOString(), usage_count:5 },
+            { id:'tmpl-01', name:'Standard Internal TLS', description:'Internal services â€” RSA 2048, 1-year, enterprise CA', cert_type:'single', key_algorithm:'RSA', key_size:2048, validity_days:365, validation_level:'IV', ca_provider:'enterprise-pki', environment:'prod', auto_renew:true, san_pattern:'*.internal', tags:['internal'], created_by:'sarah.chen@enterprise.internal', created_at:new Date(Date.now()-180*86400000).toISOString(), usage_count:12 },
+            { id:'tmpl-02', name:'Public Wildcard OV', description:'Production wildcard â€” RSA 2048, DigiCert OV, 1-year', cert_type:'wildcard', key_algorithm:'RSA', key_size:2048, validity_days:365, validation_level:'OV', ca_provider:'digicert', environment:'prod', auto_renew:true, san_pattern:'*.enterprise.com', tags:['production','wildcard'], created_by:'sarah.chen@enterprise.internal', created_at:new Date(Date.now()-120*86400000).toISOString(), usage_count:5 },
             { id:"tmpl-03", name:"API ECDSA High Performance", description:"API endpoints - ECDSA P-256, Lets Encrypt, 90-day", cert_type:'single', key_algorithm:'ECDSA', key_size:256, validity_days:90, validation_level:'DV', ca_provider:'letsencrypt', environment:'prod', auto_renew:true, san_pattern:'api.*.enterprise.com', tags:['api','performance'], created_by:'marcus.johnson@enterprise.internal', created_at:new Date(Date.now()-90*86400000).toISOString(), usage_count:8 },
-            { id:'tmpl-04', name:'PCI-DSS EV Payment', description:'Payment systems — RSA 4096, DigiCert EV, 2-year', cert_type:'ev', key_algorithm:'RSA', key_size:4096, validity_days:730, validation_level:'EV', ca_provider:'digicert', environment:'prod', auto_renew:false, san_pattern:'payments.enterprise.com', tags:['payments','pci-dss','ev'], created_by:'sarah.chen@enterprise.internal', created_at:new Date(Date.now()-60*86400000).toISOString(), usage_count:2 },
-            { id:'tmpl-05', name:'mTLS Service Mesh', description:'Internal service mesh — ECDSA P-384, Private CA, 1-year', cert_type:'mtls', key_algorithm:'ECDSA', key_size:384, validity_days:365, validation_level:'IV', ca_provider:'enterprise-pki', environment:'prod', auto_renew:true, san_pattern:'*.service-mesh.enterprise.internal', tags:['mtls','mesh'], created_by:'marcus.johnson@enterprise.internal', created_at:new Date(Date.now()-45*86400000).toISOString(), usage_count:3 }
+            { id:'tmpl-04', name:'PCI-DSS EV Payment', description:'Payment systems â€” RSA 4096, DigiCert EV, 2-year', cert_type:'ev', key_algorithm:'RSA', key_size:4096, validity_days:730, validation_level:'EV', ca_provider:'digicert', environment:'prod', auto_renew:false, san_pattern:'payments.enterprise.com', tags:['payments','pci-dss','ev'], created_by:'sarah.chen@enterprise.internal', created_at:new Date(Date.now()-60*86400000).toISOString(), usage_count:2 },
+            { id:'tmpl-05', name:'mTLS Service Mesh', description:'Internal service mesh â€” ECDSA P-384, Private CA, 1-year', cert_type:'mtls', key_algorithm:'ECDSA', key_size:384, validity_days:365, validation_level:'IV', ca_provider:'enterprise-pki', environment:'prod', auto_renew:true, san_pattern:'*.service-mesh.enterprise.internal', tags:['mtls','mesh'], created_by:'marcus.johnson@enterprise.internal', created_at:new Date(Date.now()-45*86400000).toISOString(), usage_count:3 }
         ];
         global.certDocuments = [
             { id:'doc-01', cert_id:'cert-01', filename:'wildcard-enterprise-internal.pem', file_type:'certificate', file_size:4096, mime_type:'application/x-pem-file', uploaded_by:'sarah.chen@enterprise.internal', uploaded_at:new Date(Date.now()-323*86400000).toISOString(), checksum:'sha256:a1b2c3d4e5f6a7b8', storage_path:'/certs/prod/cert-01/certificate.pem', is_private_key:false, download_count:3 },
@@ -3609,7 +3609,7 @@ function handleMockAPI(req, res) {
         ];
         global.certNotifications = [
             { id:'notif-01', cert_id:'cert-02', type:'expiry_warning', severity:'high', title:'Certificate Expiring in 12 Days', message:'api-uat.enterprise.internal expires soon. Auto-renewal enabled.', recipients:['api@enterprise.internal','marcus.johnson@enterprise.internal'], channels:['email','slack'], sent_at:new Date(Date.now()-3600000).toISOString(), acknowledged:false, action_required:false },
-            { id:'notif-02', cert_id:'cert-08', type:'expiry_critical', severity:'critical', title:'Certificate Expiring in 5 Days — Action Required', message:'api.enterprise.com expires in 5 days. Auto-renewal in progress.', recipients:['api@enterprise.internal','sarah.chen@enterprise.internal'], channels:['email','slack','pagerduty'], sent_at:new Date(Date.now()-900000).toISOString(), acknowledged:false, action_required:true },
+            { id:'notif-02', cert_id:'cert-08', type:'expiry_critical', severity:'critical', title:'Certificate Expiring in 5 Days â€” Action Required', message:'api.enterprise.com expires in 5 days. Auto-renewal in progress.', recipients:['api@enterprise.internal','sarah.chen@enterprise.internal'], channels:['email','slack','pagerduty'], sent_at:new Date(Date.now()-900000).toISOString(), acknowledged:false, action_required:true },
             { id:'notif-03', cert_id:'cert-09', type:'expired', severity:'critical', title:'Certificate EXPIRED', message:'vpn.enterprise.com certificate has expired.', recipients:['network@enterprise.internal','sarah.chen@enterprise.internal'], channels:['email','slack','pagerduty','sms'], sent_at:new Date(Date.now()-600000).toISOString(), acknowledged:false, action_required:true },
             { id:'notif-04', cert_id:'cert-05', type:'expiry_warning', severity:'medium', title:'Certificate Expiring in 62 Days', message:'service-mesh certificate expires in 62 days.', recipients:['platform@enterprise.internal'], channels:['email'], sent_at:new Date(Date.now()-86400000).toISOString(), acknowledged:true, action_required:false }
         ];
@@ -4329,3 +4329,4 @@ if (require.main === module) {
 }
 
 module.exports = { handleMockAPI, adminServer, gatewayServer };
+
