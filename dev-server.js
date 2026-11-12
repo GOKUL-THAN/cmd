@@ -3254,6 +3254,285 @@ function handleMockAPI(req, res) {
     }
 
 
+    // ============================================================    // ==========================================================================
+    // SECURITY & ENTERPRISE ENHANCEMENTS
+    // Req: Session timeout, account lockout, password complexity, CSRF,
+    //      pagination, input sanitization, PDF reports, LDAP, background jobs
+    // ==========================================================================
+
+    // --- SESSION TIMEOUT ---
+    if (!global._sessionStore) {
+        global._sessionStore = new Map();
+        global._loginAttempts = new Map();
+        global._lockedAccounts = new Map();
+        global._csrfTokens = new Map();
+    }
+    var _sessions = global._sessionStore;
+    var _loginAttempts = global._loginAttempts;
+    var _lockedAccounts = global._lockedAccounts;
+    var _csrfTokens = global._csrfTokens;
+    var SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+    var MAX_LOGIN_ATTEMPTS = 5;
+    var LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
+    // Session validation middleware
+    if (pathname === '/api/v1/auth/session') {
+        var sessionToken = (req.headers.authorization || '').replace('Bearer ', '');
+        var session = _sessions.get(sessionToken);
+        if (session && (Date.now() - session.lastAccess) > SESSION_TIMEOUT_MS) {
+            _sessions.delete(sessionToken);
+            res.writeHead(401, {'Content-Type':'application/json'});
+            res.end(JSON.stringify({error:'Session expired', code:'SESSION_TIMEOUT'}));
+            return true;
+        }
+        if (session) {
+            session.lastAccess = Date.now();
+            res.writeHead(200, {'Content-Type':'application/json'});
+            res.end(JSON.stringify({valid:true, session:{email:session.email, role:session.role, expires_in:SESSION_TIMEOUT_MS, created_at:session.created}}));
+        } else {
+            res.writeHead(401, {'Content-Type':'application/json'});
+            res.end(JSON.stringify({error:'No active session', code:'NO_SESSION'}));
+        }
+        return true;
+    }
+
+    // --- ACCOUNT LOCKOUT ---
+    if (pathname === '/api/v1/auth/login-attempts') {
+        res.writeHead(200, {'Content-Type':'application/json'});
+        var attempts = {};
+        _loginAttempts.forEach(function(v,k) { attempts[k] = v; });
+        var locked = {};
+        _lockedAccounts.forEach(function(v,k) { locked[k] = {locked_until:v, remaining_ms:Math.max(0,v-Date.now())}; });
+        res.end(JSON.stringify({attempts:attempts, locked_accounts:locked, max_attempts:MAX_LOGIN_ATTEMPTS, lockout_duration_ms:LOCKOUT_DURATION_MS}));
+        return true;
+    }
+
+    // --- PASSWORD COMPLEXITY VALIDATION ---
+    if (pathname === '/api/v1/auth/password-policy') {
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({
+            min_length: 12,
+            require_uppercase: true,
+            require_lowercase: true,
+            require_digits: true,
+            require_special: true,
+            special_chars: '!@#$%^&*()_+-=[]{}|;:,.<>?',
+            prevent_reuse: 5,
+            max_age_days: 90,
+            history_check: true,
+            description: 'Enterprise password policy: minimum 12 characters with upper, lower, digit, and special character'
+        }));
+        return true;
+    }
+    if (pathname === '/api/v1/auth/validate-password' && req.method === 'POST') {
+        var pwBody=''; req.on('data',function(c){pwBody+=c;}); req.on('end',function(){
+            var input={}; try{input=JSON.parse(pwBody);}catch(e){}
+            var pw=input.password||'';
+            var errors=[];
+            if (pw.length<12) errors.push('Password must be at least 12 characters');
+            if (!/[A-Z]/.test(pw)) errors.push('Must contain at least one uppercase letter');
+            if (!/[a-z]/.test(pw)) errors.push('Must contain at least one lowercase letter');
+            if (!/[0-9]/.test(pw)) errors.push('Must contain at least one digit');
+            if (!/[!@#\$%\^&\*\(\)_\+\-=\[\]\{\}\|;:,\.\<\>\?]/.test(pw)) errors.push('Must contain at least one special character');
+            if (pw.length>128) errors.push('Password too long (max 128 characters)');
+            var score = Math.min(100, (pw.length>=16?25:0) + (/[A-Z]/.test(pw)?15:0) + (/[a-z]/.test(pw)?15:0) + (/[0-9]/.test(pw)?15:0) + (/[^A-Za-z0-9]/.test(pw)?15:0) + (pw.length>=20?15:0));
+            res.writeHead(200, {'Content-Type':'application/json'});
+            res.end(JSON.stringify({valid:errors.length===0, errors:errors, strength_score:score, strength_label:score>=80?'strong':score>=50?'moderate':'weak'}));
+        });
+        return true;
+    }
+
+    // --- CSRF TOKEN ---
+    if (pathname === '/api/v1/auth/csrf-token') {
+        var csrfToken = 'csrf-' + Date.now() + '-' + Math.random().toString(36).substring(2,12);
+        _csrfTokens.set(csrfToken, {created: Date.now(), expires: Date.now() + 30*60*1000});
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({csrf_token:csrfToken, expires_in:1800}));
+        return true;
+    }
+    if (pathname === '/api/v1/auth/verify-csrf' && req.method === 'POST') {
+        var csrfBody=''; req.on('data',function(c){csrfBody+=c;}); req.on('end',function(){
+            var input={}; try{input=JSON.parse(csrfBody);}catch(e){}
+            var token=input.csrf_token||'';
+            var stored=_csrfTokens.get(token);
+            if (stored && stored.expires > Date.now()) {
+                res.writeHead(200, {'Content-Type':'application/json'});
+                res.end(JSON.stringify({valid:true}));
+            } else {
+                res.writeHead(403, {'Content-Type':'application/json'});
+                res.end(JSON.stringify({valid:false, error:'Invalid or expired CSRF token'}));
+            }
+        });
+        return true;
+    }
+
+    // --- LDAP / ACTIVE DIRECTORY MOCK ---
+    if (pathname === '/api/v1/auth/ldap/config') {
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({
+            enabled: true,
+            server_url: 'ldaps://dc01.enterprise.internal:636',
+            base_dn: 'DC=enterprise,DC=internal',
+            bind_dn: 'CN=clm-service,OU=ServiceAccounts,DC=enterprise,DC=internal',
+            user_search_base: 'OU=Users,DC=enterprise,DC=internal',
+            group_search_base: 'OU=Groups,DC=enterprise,DC=internal',
+            connection_status: 'connected',
+            ssl: true,
+            last_sync: new Date(Date.now()-3600000).toISOString(),
+            user_count: 247,
+            group_mappings: [
+                {ldap_group:'CN=CLM-Admins,OU=Groups,DC=enterprise,DC=internal', clm_role:'cert_admin'},
+                {ldap_group:'CN=CLM-Operators,OU=Groups,DC=enterprise,DC=internal', clm_role:'cert_operator'},
+                {ldap_group:'CN=CLM-Viewers,OU=Groups,DC=enterprise,DC=internal', clm_role:'cert_viewer'}
+            ]
+        }));
+        return true;
+    }
+    if (pathname === '/api/v1/auth/ldap/sync' && req.method === 'POST') {
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({synced:true, users_found:247, users_imported:0, users_updated:3, groups_synced:6, completed_at:new Date().toISOString()}));
+        return true;
+    }
+
+    // --- PAGINATION HELPER (adds pagination metadata to list responses) ---
+    if (pathname === '/api/v1/certificates/paginated') {
+        var page = parseInt(parsed.searchParams.get('page')||'1');
+        var pageSize = parseInt(parsed.searchParams.get('page_size')||'10');
+        var sort = parsed.searchParams.get('sort')||'domain';
+        var order = parsed.searchParams.get('order')||'asc';
+        var filtered = [...mockCerts];
+        // Sort
+        filtered.sort(function(a,b) {
+            var va=(a[sort]||'').toString().toLowerCase();
+            var vb=(b[sort]||'').toString().toLowerCase();
+            return order==='desc'?vb.localeCompare(va):va.localeCompare(vb);
+        });
+        var total=filtered.length;
+        var totalPages=Math.ceil(total/pageSize);
+        var startIdx=(page-1)*pageSize;
+        var pageItems=filtered.slice(startIdx, startIdx+pageSize);
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({
+            certificates:pageItems,
+            pagination:{page:page, page_size:pageSize, total:total, total_pages:totalPages, has_next:page<totalPages, has_prev:page>1, next_page:page<totalPages?page+1:null, prev_page:page>1?page-1:null},
+            sort:{field:sort, order:order}
+        }));
+        return true;
+    }
+
+    // --- PDF REPORT GENERATION (mock) ---
+    if (pathname === '/api/v1/certificates/report' && req.method === 'GET') {
+        var format=parsed.searchParams.get('format')||'pdf';
+        var stats=getCertStats();
+        if (format==='pdf') {
+            // Generate a simple HTML-based PDF mock (real PDF would use puppeteer/pdfkit in production)
+            var pdfContent = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources <<>> /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length ' + (stats.total+stats.active+stats.expiring+stats.expired).toString().length + ' >>\nstream\nBT /F1 12 Tf 50 750 Td (Certificate Inventory Report) Tj ET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000213 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n' + (300+(stats.total+stats.active+stats.expiring+stats.expired).toString().length) + '\n%%EOF';
+            res.writeHead(200, {'Content-Type':'application/pdf','Content-Disposition':'attachment; filename="cert-report-'+new Date().toISOString().slice(0,10)+'.pdf"'});
+            res.end(pdfContent);
+        } else if (format==='csv') {
+            var hdr='id,domain,issuer,status,days_left,environment,key_algorithm,key_size,validation_level,ca_provider,owner_team,not_after\n';
+            var rows=mockCerts.map(function(c){return [c.id,c.domain,c.issuer,c.status,c.days_left,c.environment,c.key_algorithm,c.key_size,c.validation_level||'DV',c.ca_provider||'unknown',c.owner_team||'-',c.not_after].join(',')}).join('\n');
+            res.writeHead(200, {'Content-Type':'text/csv','Content-Disposition':'attachment; filename="cert-inventory-'+new Date().toISOString().slice(0,10)+'.csv"'});
+            res.end(hdr+rows);
+        } else {
+            res.writeHead(200, {'Content-Type':'application/json'});
+            res.end(JSON.stringify({report_type:'certificate_inventory', generated_at:new Date().toISOString(), statistics:stats, certificates:mockCerts, total:mockCerts.length}));
+        }
+        return true;
+    }
+
+    // --- AUDIT LOG INTEGRITY (hash chain) ---
+    if (pathname === '/api/v1/cert-audit/integrity') {
+        var logs=certAuditLog||[];
+        var hashChain=[];
+        var prevHash='0000000000000000000000000000000000000000000000000000000000000000';
+        logs.forEach(function(l,i){
+            var entryHash=prevHash+l.id+l.action+l.actor+l.timestamp;
+            // Simple hash simulation (real impl would use crypto.createHash)
+            var hash='';
+            for (var j=0;j<64;j++) { hash+=((entryHash.charCodeAt(j%entryHash.length)*31+j)%16).toString(16); }
+            hashChain.push({index:i, hash:hash, prev_hash:prevHash, valid:true});
+            prevHash=hash;
+        });
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({total_entries:logs.length, hash_chain:hashChain, integrity_valid:true, last_verified:new Date().toISOString(), algorithm:'SHA-256 simulated'}));
+        return true;
+    }
+
+    // --- BACKGROUND JOB QUEUE ---
+    if (pathname === '/api/v1/jobs') {
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({jobs:[
+            {id:'job-renewal-scan',type:'renewal_scan',status:'completed',last_run:new Date(Date.now()-3600000).toISOString(),next_run:new Date(Date.now()+82800000).toISOString(),duration_ms:1200,processed:3,succeeded:3,failed:0},
+            {id:'job-discovery-scan',type:'discovery',status:'running',started_at:new Date(Date.now()-60000).toISOString(),progress:65,scanned:165,total:254},
+            {id:'job-expiry-check',type:'expiry_monitor',status:'completed',last_run:new Date(Date.now()-1800000).toISOString(),next_run:new Date(Date.now()+1800000).toISOString(),duration_ms:340,alerts_generated:2},
+            {id:'job-compliance-audit',type:'compliance',status:'scheduled',next_run:new Date(Date.now()+86400000).toISOString()},
+            {id:'job-deploy-verification',type:'deploy_verify',status:'completed',last_run:new Date(Date.now()-7200000).toISOString(),next_run:new Date(Date.now()+7200000).toISOString(),endpoints_checked:3,healthy:3,unhealthy:0}
+        ], total:5}));
+        return true;
+    }
+    if (pathname.match(/^\/api\/v1\/jobs\/[^\/]+\/run$/) && req.method==='POST') {
+        var jobId=pathname.split('/')[4];
+        res.writeHead(202, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({job_id:jobId, status:'started', message:'Job triggered manually', started_at:new Date().toISOString()}));
+        return true;
+    }
+
+    // --- INPUT SANITIZATION HELPER ENDPOINT ---
+    if (pathname === '/api/v1/security/sanitize' && req.method === 'POST') {
+        var sanBody=''; req.on('data',function(c){sanBody+=c;}); req.on('end',function(){
+            var input={}; try{input=JSON.parse(sanBody);}catch(e){}
+            var sanitize=function(str){
+                if (typeof str!=='string') return str;
+                return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#x27;').replace(/\//g,'&#x2F;');
+            };
+            var sanitized={};
+            Object.keys(input).forEach(function(k){ sanitized[k]=sanitize(input[k]); });
+            res.writeHead(200, {'Content-Type':'application/json'});
+            res.end(JSON.stringify({original:input, sanitized:sanitized, changes:Object.keys(input).filter(function(k){return input[k]!==sanitized[k];})}));
+        });
+        return true;
+    }
+
+    // --- SECURITY HEADERS CHECK ---
+    if (pathname === '/api/v1/security/headers') {
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({
+            headers:{
+                'X-Content-Type-Options':'nosniff',
+                'X-Frame-Options':'SAMEORIGIN',
+                'X-XSS-Protection':'1; mode=block',
+                'Referrer-Policy':'strict-origin-when-cross-origin',
+                'Access-Control-Allow-Origin':'*',
+                'Access-Control-Allow-Methods':'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+                'Access-Control-Allow-Headers':'Content-Type, Authorization, X-CSRF-Token',
+                'Strict-Transport-Security':'max-age=31536000; includeSubDomains',
+                'Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+            },
+            security_score:85,
+            recommendations:['Add X-Request-ID for request tracing','Implement CSP nonce for inline scripts','Add X-Permitted-Cross-Domain-Policies: none']
+        }));
+        return true;
+    }
+
+    // --- RATE LIMITING STATUS ---
+    if (pathname === '/api/v1/security/rate-limits') {
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({
+            enabled:true,
+            limits:{
+                'auth/login':{requests:5, window_ms:60000, action:'lockout_15min'},
+                'certificates/issue':{requests:10, window_ms:60000, action:'throttle'},
+                'certificates/bulk-upload':{requests:3, window_ms:60000, action:'reject'},
+                'search':{requests:30, window_ms:60000, action:'throttle'},
+                'default':{requests:60, window_ms:60000, action:'throttle'}
+            },
+            current_usage:{},
+            description:'Rate limiting prevents brute-force attacks and API abuse'
+        }));
+        return true;
+    }
+
     // ==========================================================================
     // CERTIFICATE MANAGEMENT SYSTEM (Full Security Implementation)
     // ==========================================================================
