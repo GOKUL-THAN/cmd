@@ -3366,8 +3366,8 @@ function handleMockAPI(req, res) {
         res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({certificates:exp, total:exp.length, threshold_days:days})); return true;
     }
     if (pathname.startsWith('/api/v1/certificates/search')) {
-        var q=(parsed.searchParams.get('q')||'').toLowerCase(); var r=q?mockCerts.filter(function(c){return (c.domain||'').toLowerCase().includes(q)||(c.issuer||'').toLowerCase().includes(q)||(c.environment||'').toLowerCase().includes(q)||(c.ca_provider||'').toLowerCase().includes(q)||(c.tags||[]).some(function(t){return t.toLowerCase().includes(q);});}):mockCerts;
-        res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({certificates:r, total:r.length, query:q})); return true;
+        var rawQ=(parsed.searchParams.get('q')||'').substring(0,200); var q=rawQ.toLowerCase(); var r=q?mockCerts.filter(function(c){return (c.domain||'').toLowerCase().includes(q)||(c.issuer||'').toLowerCase().includes(q)||(c.environment||'').toLowerCase().includes(q)||(c.ca_provider||'').toLowerCase().includes(q)||(c.tags||[]).some(function(t){return t.toLowerCase().includes(q);});}):mockCerts;
+        res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({certificates:r, total:r.length})); return true;
     }
     if (pathname === '/api/v1/certificates/dashboard') {
         var s=getCertStats();
