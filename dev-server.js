@@ -1325,9 +1325,18 @@ function handleMockAPI(req, res) {
 
     // Auth proxy mock
     if (pathname.includes('/token') || pathname === '/auth/login' || pathname.startsWith('/auth/')) {
+        const mockToken = "mock-jwt-token-clm-admin-access";
+        if (global._sessionStore) {
+            global._sessionStore.set(mockToken, {
+                email: 'admin@enterprise.internal',
+                role: 'super_admin',
+                created: Date.now(),
+                lastAccess: Date.now()
+            });
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
-            access_token: "mock-jwt-token-clm-admin-access",
+            access_token: mockToken,
             refresh_token: "mock-jwt-refresh-token",
             expires_in: 3600,
             token_type: "Bearer"
@@ -3879,7 +3888,12 @@ function handleMockAPI(req, res) {
     if (pathname === '/api/v1/cert-auth/login' && req.method==='POST') {
         var body=''; req.on('data',function(c){body+=c;}); req.on('end',function(){
             var input={}; try{input=JSON.parse(body);}catch(e){}
-            var user=certUsers.find(function(u){return u.email===input.email;})||certUsers[0];
+            var user=certUsers.find(function(u){return u.email===input.email;});
+            if(!user){
+                res.writeHead(401,{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'});
+                res.end(JSON.stringify({error:'Invalid credentials', code:'AUTH_FAILED'}));
+                return;
+            }
             certAuditLog.unshift({id:'ca-'+Date.now(), cert_id:'system', action:'login', actor:user.email, actor_role:user.role, timestamp:new Date().toISOString(), details:'User authenticated to CMS', ip_address:'10.125.4.68', result:'success', risk_level:'low'});
             res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({access_token:'cert-jwt-'+Date.now(), token_type:'Bearer', expires_in:3600, user:{id:user.id, name:user.name, email:user.email, role:user.role, permissions:user.permissions}, mfa_required:user.mfa_enabled}));
         }); return true;
@@ -4048,6 +4062,15 @@ function handleMockAPI(req, res) {
     if (pathname === '/api/v1/discover' && req.method === 'POST') {
         let body = ''; req.on('data', c => body += c); req.on('end', () => {
             let input = {}; try { input = JSON.parse(body); } catch(e) {}
+            var targetHost = input.cidr ? input.cidr.split('/')[0] : (input.host || input.target || '');
+            if (targetHost && !input.allow_private_network) {
+                var ssrfCheck = isSSRFSafeUrl('http://' + targetHost);
+                if (!ssrfCheck.safe) {
+                    res.writeHead(400, {'Content-Type':'application/json','Access-Control-Allow-Origin':'*'});
+                    res.end(JSON.stringify({error: 'Target blocked: ' + ssrfCheck.reason, blocked_target: targetHost}));
+                    return;
+                }
+            }
             res.writeHead(202, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ scan_id:'scan-'+Date.now(), status:'started', target:input.cidr||input.host||'10.125.0.0/16', message:'Discovery scan started' }));
         });
@@ -4056,6 +4079,15 @@ function handleMockAPI(req, res) {
     if (pathname === '/api/v1/discover/dns' && req.method === 'POST') {
         let body = ''; req.on('data', c => body += c); req.on('end', () => {
             let input = {}; try { input = JSON.parse(body); } catch(e) {}
+            var targetHost = input.domain || '';
+            if (targetHost && !input.allow_private_network) {
+                var ssrfCheck = isSSRFSafeUrl('http://' + targetHost);
+                if (!ssrfCheck.safe) {
+                    res.writeHead(400, {'Content-Type':'application/json','Access-Control-Allow-Origin':'*'});
+                    res.end(JSON.stringify({error: 'Target blocked: ' + ssrfCheck.reason, blocked_target: targetHost}));
+                    return;
+                }
+            }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ domain:input.domain||'enterprise.internal', records: [
                 { type:'A', name:'api', value:'10.125.4.10', tls_port:443, cert_found:true },
