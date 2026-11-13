@@ -20,7 +20,8 @@
         "demo:stop": "node scripts/stop-demo.js",
         "demo:reset": "node scripts/reset-demo-data.js",
         "demo:test": "node scripts/run-demo-tests.js",
-        "demo:health": "node scripts/health-check.js"
+        "demo:health": "node scripts/health-check.js",
+        "test:v410": "node scripts/test_v410_gaps.js"
     },
     "engines": {
         "node": ">=18.0.0"

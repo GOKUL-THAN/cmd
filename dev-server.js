@@ -4010,9 +4010,14 @@ function handleMockAPI(req, res) {
         return true;
     }
     if (pathname.startsWith('/api/v1/ca/accounts/') && req.method === 'POST') {
-        res.writeHead(201, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ id:'ca-acct-'+Date.now(), status:'active', message:'CA account created' }));
-        return true;
+        // Skip: specific sub-routes (/test, /default) are handled further down
+        if (pathname.match(/^\/api\/v1\/ca\/accounts\/[^\/]+\/(test|default)$/)) {
+            // fall through to specific handlers below
+        } else {
+            res.writeHead(201, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ id:'ca-acct-'+Date.now(), status:'active', message:'CA account created' }));
+            return true;
+        }
     }
     if (pathname === '/api/v1/ca/orders') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -4219,12 +4224,17 @@ function handleMockAPI(req, res) {
         return true;
     }
     if (pathname.startsWith('/api/v1/policies/') && req.method === 'POST') {
-        let body = ''; req.on('data', c => body += c); req.on('end', () => {
-            let input = {}; try { input = JSON.parse(body); } catch(e) {}
-            res.writeHead(201, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ id:'pol-'+Date.now(), ...input, enabled:true }));
-        });
-        return true;
+        // Skip: /api/v1/policies/evaluate is handled further down
+        if (pathname === '/api/v1/policies/evaluate') {
+            // fall through to specific handler below
+        } else {
+            let body = ''; req.on('data', c => body += c); req.on('end', () => {
+                let input = {}; try { input = JSON.parse(body); } catch(e) {}
+                res.writeHead(201, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ id:'pol-'+Date.now(), ...input, enabled:true }));
+            });
+            return true;
+        }
     }
     if (pathname === '/api/v1/policies/evaluate' && req.method === 'POST') {
         let body = ''; req.on('data', c => body += c); req.on('end', () => {
