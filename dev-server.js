@@ -2585,17 +2585,27 @@ function handleMockAPI(req, res) {
     }
 
     if (pathname === '/api/v1/financials/three-way-match' && req.method === 'POST') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-            status: "matched",
-            tolerance_percent: 0.0,
-            purchase_order_id: "PO-2026-9022",
-            contract_reference: "CNT-2026-00892",
-            invoice_amount: 87500.00,
-            contract_rate: 87500.00,
-            verified: true,
-            timestamp: new Date().toISOString()
-        }));
+        let body = ''; req.on('data', c => body += c); req.on('end', () => {
+            let input = {}; try { input = JSON.parse(body); } catch(e) {}
+            const po = input.po_amount || input.purchase_order_amount || 87500;
+            const inv = input.invoice_amount || 87500;
+            const tolerance = 0.005;
+            const variance = Math.abs(inv - po);
+            const variancePct = po > 0 ? variance / po : 0;
+            const matched = variancePct <= tolerance;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                status: matched ? 'matched' : 'mismatch',
+                purchase_order_amount: po,
+                invoice_amount: inv,
+                variance: variance,
+                variance_percent: (variancePct * 100).toFixed(2),
+                tolerance_percent: (tolerance * 100).toFixed(1),
+                within_tolerance: matched,
+                verified: matched,
+                timestamp: new Date().toISOString()
+            }));
+        });
         return true;
     }
 
@@ -4218,8 +4228,47 @@ function handleMockAPI(req, res) {
     }
     if (pathname === '/api/v1/policies/evaluate' && req.method === 'POST') {
         let body = ''; req.on('data', c => body += c); req.on('end', () => {
+            let input = {}; try { input = JSON.parse(body); } catch(e) {}
+            const cert = input.cert || input.certificate || {};
+            const policies = [
+                {
+                    id: 'pol-01', name: 'Minimum RSA Key Size', type: 'key_strength', enabled: true,
+                    check: c => !(c.key_algorithm === 'RSA' && c.key_size < 2048),
+                    reason: c => `RSA key size ${c.key_size} is below required minimum of 2048 bits`
+                },
+                {
+                    id: 'pol-02', name: 'Auto-Renewal Configuration', type: 'lifecycle', enabled: true,
+                    check: c => true,
+                    reason: c => 'Auto-renewal policy check failed'
+                },
+                {
+                    id: 'pol-04', name: 'No Self-Signed Certificates in Production', type: 'trust_chain', enabled: true,
+                    check: c => !(c.is_self_signed === true && (c.environment === 'prod' || c.environment === 'production')),
+                    reason: c => `Self-signed certificate detected in ${c.environment} environment`
+                },
+                {
+                    id: 'pol-05', name: 'Minimum TLS Version', type: 'protocol', enabled: true,
+                    check: c => {
+                        if (!c.min_tls_version) return true;
+                        const ver = parseFloat(c.min_tls_version.toString().replace('TLSv', '').replace('TLS', ''));
+                        return ver >= 1.2;
+                    },
+                    reason: c => `TLS version ${c.min_tls_version} is below required minimum of TLS 1.2`
+                }
+            ];
+            const violations = policies.filter(p => p.enabled && !p.check(cert)).map(p => ({
+                policy_id: p.id,
+                policy_name: p.name,
+                type: p.type,
+                reason: p.reason(cert)
+            }));
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ compliant:true, violations:[], evaluated_at:new Date().toISOString() }));
+            res.end(JSON.stringify({
+                compliant: violations.length === 0,
+                violations: violations,
+                evaluated_at: new Date().toISOString(),
+                cert_id: cert.id || 'unknown'
+            }));
         });
         return true;
     }
@@ -4240,13 +4289,27 @@ function handleMockAPI(req, res) {
         return true;
     }
     if (pathname === '/api/v1/reports/compliance') {
+        const expiredCerts = mockCerts.filter(c => c.status === 'expired' || (c.days_left !== undefined && c.days_left <= 0)).length;
+        const selfSigned = mockCerts.filter(c => c.is_self_signed).length;
+        const pciChecks = 12, pciPassed = Math.max(0, pciChecks - expiredCerts);
+        const socChecks = 10, socPassed = Math.max(0, socChecks - selfSigned);
+        const gdprChecks = 8, gdprPassed = gdprChecks;
+        const hipaaChecks = 6, hipaaPassed = hipaaChecks;
+        const score = Math.round((pciPassed + socPassed + gdprPassed + hipaaPassed) / (pciChecks + socChecks + gdprChecks + hipaaChecks) * 100);
+        const grade = score >= 95 ? 'A' : score >= 85 ? 'B' : score >= 75 ? 'C' : 'D';
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ compliant:true, frameworks: [
-            { name:'GDPR', status:'compliant', checks:8, passed:8, failed:0 },
-            { name:'PCI-DSS', status:'compliant', checks:12, passed:12, failed:0 },
-            { name:'SOC 2', status:'compliant', checks:10, passed:10, failed:0 },
-            { name:'HIPAA', status:'compliant', checks:6, passed:6, failed:0 }
-        ], last_audit:new Date(Date.now()-7*86400000).toISOString() }));
+        res.end(JSON.stringify({
+            compliant: score >= 85,
+            score: score,
+            grade: grade,
+            frameworks: [
+                { name: 'PCI-DSS', checks: pciChecks, passed: pciPassed, score: Math.round(pciPassed / pciChecks * 100) },
+                { name: 'SOC2', checks: socChecks, passed: socPassed, score: Math.round(socPassed / socChecks * 100) },
+                { name: 'GDPR', checks: gdprChecks, passed: gdprPassed, score: Math.round(gdprPassed / gdprChecks * 100) },
+                { name: 'HIPAA', checks: hipaaChecks, passed: hipaaPassed, score: Math.round(hipaaPassed / hipaaChecks * 100) }
+            ],
+            last_audit: new Date(Date.now() - 7 * 86400000).toISOString()
+        }));
         return true;
     }
     if (pathname === '/api/v1/vsatellites/enroll' && req.method === 'POST') {
