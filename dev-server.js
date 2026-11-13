@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CLM Unified Development Web Server
 // ==============================================================================
 // Serves both CLM web portals and provides lightweight mock APIs for instant
@@ -1356,6 +1356,30 @@ function handleMockAPI(req, res) {
     }
 
     // Tenants
+
+    // POST /api/v1/tenants - create tenant
+    if (pathname === '/api/v1/tenants' && req.method === 'POST') {
+        let body = ''; req.on('data', c => body += c); req.on('end', () => {
+            let input = {}; try { input = JSON.parse(body); } catch(e) {}
+            const newTenant = {
+                id: 'tenant-' + Date.now(),
+                name: input.name || 'New Tenant',
+                slug: input.slug || ('tenant-' + Math.floor(Math.random() * 89999 + 10000)),
+                plan: input.plan || 'enterprise',
+                status: input.status || 'active',
+                max_certs: input.max_certs || 10000,
+                max_satellites: input.max_satellites || 50,
+                max_users: input.max_users || 100,
+                data_region: input.data_region || 'ap-south-1',
+                created_at: new Date().toISOString()
+            };
+            mockTenants.push(newTenant);
+            res.writeHead(201, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ tenant: newTenant }));
+        });
+        return true;
+    }
+
     if (pathname === '/api/v1/tenants') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ tenants: mockTenants, total: mockTenants.length }));
@@ -2840,6 +2864,15 @@ function handleMockAPI(req, res) {
         return true;
     }
 
+
+    // DELETE /api/v1/identity/users/:id - delete user (BEFORE broader identity handlers)
+    if (pathname.match(/^\/api\/v1\/identity\/users\/[^\/]+$/) && req.method === 'DELETE') {
+        const uid = pathname.split('/').pop();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ deleted: true, id: uid }));
+        return true;
+    }
+
     // Identity management write operations
     if (pathname.startsWith('/api/v1/identity/') && req.method === 'POST') {
         const sub = pathname.replace('/api/v1/identity/', '');
@@ -2914,6 +2947,58 @@ function handleMockAPI(req, res) {
     // -----------------------------------------------------------------------
 
     // Tenant by ID (GET /api/v1/tenants/:id) Ã¢â‚¬â€ used by loadSSO, loadOrgTenants
+
+    // PATCH /api/v1/tenants/:id - update tenant (BEFORE GET handler)
+    if (pathname.match(/^\/api\/v1\/tenants\/[^\/]+$/) && req.method === 'PATCH') {
+        const tenantId = pathname.split('/').pop();
+        let body = ''; req.on('data', c => body += c); req.on('end', () => {
+            let input = {}; try { input = JSON.parse(body); } catch(e) {}
+            let tenant = mockTenants.find(t => t.id === tenantId || t.slug === tenantId);
+            if (!tenant) {
+                tenant = { id: tenantId, name: 'Enterprise CLM', slug: tenantId, plan: 'enterprise', status: 'active', max_certs: 100000, max_satellites: 50, max_users: 100, data_region: 'ap-south-1', created_at: new Date().toISOString() };
+                mockTenants.push(tenant);
+            }
+            if (input.plan !== undefined) tenant.plan = input.plan;
+            if (input.status !== undefined) tenant.status = input.status;
+            if (input.name !== undefined) tenant.name = input.name;
+            if (input.max_certs !== undefined) tenant.max_certs = input.max_certs;
+            if (input.max_satellites !== undefined) tenant.max_satellites = input.max_satellites;
+            if (input.max_users !== undefined) tenant.max_users = input.max_users;
+            tenant.updated_at = new Date().toISOString();
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ tenant }));
+        });
+        return true;
+    }
+
+    // DELETE /api/v1/tenants/:id - with dependency check (BEFORE GET handler)
+    if (pathname.match(/^\/api\/v1\/tenants\/[^\/]+$/) && req.method === 'DELETE') {
+        const tenantId = pathname.split('/').pop();
+        const force = parsed.searchParams.get('force') === 'true';
+        const depsContracts = mockContracts.filter(c => c.tenant_id === tenantId).length;
+        const depsUsers = 5;
+        if (!force && (depsContracts > 0 || depsUsers > 0)) {
+            res.writeHead(409, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ error: 'Tenant has active dependents. Use ?force=true to delete.', dependents: { contracts: depsContracts, users: depsUsers } }));
+            return true;
+        }
+        const idx = mockTenants.findIndex(t => t.id === tenantId || t.slug === tenantId);
+        if (idx !== -1) mockTenants.splice(idx, 1);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ deleted: true, id: tenantId }));
+        return true;
+    }
+
+    // POST /api/v1/tenants/:id/sso - configure SSO for tenant
+    if (pathname.match(/^\/api\/v1\/tenants\/[^\/]+\/sso$/) && req.method === 'POST') {
+        let body = ''; req.on('data', c => body += c); req.on('end', () => {
+            let input = {}; try { input = JSON.parse(body); } catch(e) {}
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ saved: true, provider: input.provider || 'saml', domains: input.domains || [], auto_provision: input.auto_provision || false, configured_at: new Date().toISOString() }));
+        });
+        return true;
+    }
+
     if (pathname.match(/^\/api\/v1\/tenants\/[^/]+$/) && req.method === 'GET') {
         const tenantId = pathname.split('/').pop();
         const tenant = mockTenants.find(t => t.id === tenantId || t.slug === tenantId)
@@ -4140,6 +4225,17 @@ function handleMockAPI(req, res) {
         });
         return true;
     }
+
+    // DELETE /api/v1/vsatellites/:id - decommission (BEFORE GET handler)
+    if (pathname.startsWith('/api/v1/vsatellites/') && req.method === 'DELETE') {
+        const vsatId = pathname.split('/').pop();
+        const idx = mockAgents.findIndex(a => a.id === vsatId);
+        if (idx !== -1) mockAgents.splice(idx, 1);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ decommissioned: true, id: vsatId }));
+        return true;
+    }
+
     if (pathname.startsWith('/api/v1/vsatellites/') && req.method === 'GET') {
         const vsatId = pathname.split('/').pop();
         const agent = mockAgents.find(a => a.id === vsatId) || { ...mockAgents[0], id: vsatId };
@@ -4292,6 +4388,107 @@ function handleMockAPI(req, res) {
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ total: logs.length, logs }));
+        return true;
+    }
+
+
+    // POST /api/v1/vsatellites/:id/command - queue command for agent
+    if (pathname.match(/^\/api\/v1\/vsatellites\/[^\/]+\/command$/) && req.method === 'POST') {
+        const agentId = pathname.split('/')[4];
+        let body = ''; req.on('data', c => body += c); req.on('end', () => {
+            let input = {}; try { input = JSON.parse(body); } catch(e) {}
+            const now = new Date();
+            const est = new Date(now.getTime() + 30000);
+            res.writeHead(202, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ queued: true, job_id: 'cmd-' + Date.now(), agent_id: agentId, command: input.command || 'health_check', args: input.args || [], status: 'queued', queued_at: now.toISOString(), estimated_completion: est.toISOString() }));
+        });
+        return true;
+    }
+
+    // POST /api/v1/ca/accounts/:name/test - test CA account connectivity
+    if (pathname.match(/^\/api\/v1\/ca\/accounts\/[^\/]+\/test$/) && req.method === 'POST') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ connected: true, latency_ms: 42, ssl_valid: true, account_active: true, tested_at: new Date().toISOString() }));
+        return true;
+    }
+
+    // POST /api/v1/ca/accounts/:name/default - set default CA account
+    if (pathname.match(/^\/api\/v1\/ca\/accounts\/[^\/]+\/default$/) && req.method === 'POST') {
+        const caName = pathname.split('/')[5];
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ set: true, default_provider: caName, updated_at: new Date().toISOString() }));
+        return true;
+    }
+
+    // POST /api/v1/ca/orders/:id/refresh - refresh CA order
+    if (pathname.match(/^\/api\/v1\/ca\/orders\/[^\/]+\/refresh$/) && req.method === 'POST') {
+        const orderId = pathname.split('/')[5];
+        const nextCheck = new Date(Date.now() + 3600000);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ id: orderId, status: 'pending_validation', refreshed_at: new Date().toISOString(), next_check: nextCheck.toISOString() }));
+        return true;
+    }
+
+    // POST /api/v1/inventory/deployments/:id/status - update deployment status
+    if (pathname.match(/^\/api\/v1\/inventory\/deployments\/[^\/]+\/status$/) && req.method === 'POST') {
+        const deployId = pathname.split('/')[5];
+        let body = ''; req.on('data', c => body += c); req.on('end', () => {
+            let input = {}; try { input = JSON.parse(body); } catch(e) {}
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ id: deployId, status: input.status || 'active', updated_at: new Date().toISOString() }));
+        });
+        return true;
+    }
+
+    // POST /api/v1/deploy/targets/:id/test - test deploy target
+    if (pathname.match(/^\/api\/v1\/deploy\/targets\/[^\/]+\/test$/) && req.method === 'POST') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ reachable: true, tls_version: 'TLS 1.3', cipher_suite: 'TLS_AES_256_GCM_SHA384', response_ms: 88, tested_at: new Date().toISOString() }));
+        return true;
+    }
+
+    // GET /api/v1/jobs/:id - return job details with logs
+    if (pathname.match(/^\/api\/v1\/jobs\/[^\/]+$/) && req.method === 'GET') {
+        const jobId = pathname.split('/')[4];
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ id: jobId, type: 'generic', status: 'completed', started_at: new Date(Date.now()-120000).toISOString(), completed_at: new Date(Date.now()-60000).toISOString(), logs: ['Job started', 'Processing...', 'Completed successfully'], result: 'success' }));
+        return true;
+    }
+
+    // POST /api/v1/jobs/:id/cancel - cancel a job
+    if (pathname.match(/^\/api\/v1\/jobs\/[^\/]+\/cancel$/) && req.method === 'POST') {
+        const jobId = pathname.split('/')[4];
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ cancelled: true, id: jobId, cancelled_at: new Date().toISOString() }));
+        return true;
+    }
+
+    // GET /api/v1/reports/export - export contract inventory
+    if (pathname === '/api/v1/reports/export' && req.method === 'GET') {
+        const fmt = parsed.searchParams.get('format') || 'json';
+        if (fmt === 'csv') {
+            const hdr = 'id,contract_number,title,type,status,counterparty_name,total_value\n';
+            const rows = mockContracts.map(function(c) { return [c.id, c.contract_number, c.type, c.status, c.total_value].join(','); }).join('\n');
+            res.writeHead(200, { 'Content-Type': 'text/csv', 'Access-Control-Allow-Origin': '*' });
+            res.end(hdr + rows);
+        } else {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ exported_at: new Date().toISOString(), total: mockContracts.length, contracts: mockContracts }));
+        }
+        return true;
+    }
+
+    // GET /api/v1/clm-reports/export - CLM portfolio audit report
+    if (pathname === '/api/v1/clm-reports/export' && req.method === 'GET') {
+        const fmt = parsed.searchParams.get('format') || 'json';
+        if (fmt === 'pdf') {
+            const pdfContent = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << >> >>\nendobj\n4 0 obj\n<< /Length 44 >>\nstream\nBT /F1 12 Tf 72 720 Td (CLM Portfolio Audit) Tj ET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000206 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n302\n%%EOF';
+            res.writeHead(200, { 'Content-Type': 'application/pdf', 'Access-Control-Allow-Origin': '*' });
+            res.end(pdfContent);
+        } else {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ report_type: 'clm_portfolio_audit', generated_at: new Date().toISOString(), contracts: mockContracts, total: mockContracts.length }));
+        }
         return true;
     }
 
