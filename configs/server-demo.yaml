@@ -1,0 +1,20 @@
+# CLM Demo Server Configuration
+# Used by npm run demo:setup for local demo with mock database
+demo_mode: true
+server:
+  port: 3000
+  gateway_port: 8080
+  host: "127.0.0.1"
+database:
+  dsn: "postgres://clm_demo:demo_password@localhost:5432/clm_demo?sslmode=disable"
+  mock_mode: true
+redis:
+  url: "redis://localhost:6379"
+  mock_mode: true
+keycloak:
+  url: "https://auth.enterprise.internal"
+  realm: "clm-enterprise"
+  mock_mode: true
+logging:
+  level: "info"
+  format: "text"

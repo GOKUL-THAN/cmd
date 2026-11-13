@@ -28,7 +28,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.23.4'
           cache: false
       - name: Check formatting of changed Go files
         env:
@@ -298,16 +298,18 @@ jobs:
       - name: Set up Go for PostgreSQL-backed approval tests
         uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.23.4'
           cache: false
 
-      - name: Run tenant-isolated Go integration tests as clm_app_role
+      - name: Run tenant-isolated Go integration tests with isolated fixture credentials
         env:
           PGHOST: 127.0.0.1
           PGPORT: 5432
           PGDATABASE: clm_test
-          PGUSER: clm_app_role
-          PGPASSWORD: app_ci_secret
+          PGUSER: postgres
+          PGPASSWORD: superuser_ci_secret
+          CLM_TEST_APP_DB_DSN: postgres://clm_app_login:app_ci_secret@127.0.0.1:5432/clm_test?sslmode=disable
+          CLM_TEST_SUPERUSER_DB_DSN: postgres://postgres:superuser_ci_secret@127.0.0.1:5432/clm_test?sslmode=disable
         run: |
           bash .github/scripts/prepare-go-module.sh components/saas-control-plane "$RUNNER_TEMP/clm-module"
           cd "$RUNNER_TEMP/clm-module"
@@ -316,14 +318,14 @@ jobs:
           go test ./internal/api/rest/handlers ./internal/saas/approval -count=1
           CLM_TEST_DB_REQUIRED=1 \
           CLM_TEST_DB_DSN="postgres://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=disable" \
-            go test ./internal/store/postgres -run '^(TestApprovalRepositoryEnforcesTenantContext|TestCertificateRepositoryListsAcrossTenantsWithScopedQueries)$' -count=1
+            go test ./internal/store/postgres -run '^(TestApprovalRepositoryEnforcesTenantContext|TestCertificateRepositoryListsAcrossTenantsWithScopedQueries|TestUserRepositoryEnforcesTenantScope)$' -count=1
 
-      - name: Execute Live RLS and Immutable Audit Tests as Non-Superuser clm_app_role
+      - name: Execute Live RLS and Immutable Audit Tests through clm_app_login
         env:
           PGHOST: 127.0.0.1
           PGPORT: 5432
           PGDATABASE: clm_test
-          PGUSER: clm_app_role
+          PGUSER: clm_app_login
           PGPASSWORD: app_ci_secret
         run: |
           psql -v ON_ERROR_STOP=1 -f scripts/test_postgres_rls_live.sql
@@ -347,3 +349,21 @@ jobs:
           PGPASSWORD: superuser_ci_secret
         run: |
           psql -v ON_ERROR_STOP=1 -f scripts/test_postgres_superuser_negative_control.sql
+
+  node-test:
+    name: Node.js tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af
+        with:
+          node-version: '20'
+      - name: Run enterprise scenario tests
+        run: node scripts/verify_scenarios_a_to_h.js
+      - name: Run lifecycle tests
+        run: node scripts/test_lifecycle_26_stages.js
+      - name: Run feature registry tests
+        run: node scripts/test_400_features.js
+      - name: Run corporate module tests
+        run: node scripts/test_corporate_modules.js
