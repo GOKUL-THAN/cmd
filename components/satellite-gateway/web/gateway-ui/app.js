@@ -1069,16 +1069,62 @@ function runPolicyDryRun() {
 
 function loadMonitoring() {
     const el = document.getElementById('content-area');
-    el.innerHTML = `<div class="card">
-        <h3>Certificate Monitoring</h3>
-        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1rem">Auto-checks every hour. Alerts sent via Slack/webhook.</p>
-        <div class="stats">
-            <div class="card stat" style="border-left:3px solid var(--danger)"><div class="label">Critical (&lt;7d)</div><div class="value" style="color:var(--danger)">0</div></div>
-            <div class="card stat" style="border-left:3px solid var(--warning)"><div class="label">Warning (&lt;14d)</div><div class="value" style="color:var(--warning)">0</div></div>
-            <div class="card stat" style="border-left:3px solid var(--primary)"><div class="label">Info (&lt;30d)</div><div class="value">0</div></div>
-            <div class="card stat" style="border-left:3px solid var(--success)"><div class="label">Healthy</div><div class="value" style="color:var(--success)">0</div></div>
-        </div>
-    </div>`;
+    el.innerHTML = '<div class="card"><p style="color:var(--muted)">Loading monitoring data...</p></div>';
+
+    Promise.all([apiGet('/api/v1/certificates'), apiGet('/api/v1/alerts')]).then(([certsData, alertsData]) => {
+        const certs = certsData.certificates || certsData || [];
+        const now = Date.now();
+        let critical = 0, warning = 0, info = 0, healthy = 0;
+
+        (Array.isArray(certs) ? certs : []).forEach(c => {
+            if (c.status === 'revoked' || c.status === 'archived') return;
+            if (!c.expiry && !c.not_after && !c.expires_at) { healthy++; return; }
+            const exp = new Date(c.expiry || c.not_after || c.expires_at).getTime();
+            const days = (exp - now) / 86400000;
+            if (days <= 7)       critical++;
+            else if (days <= 14) warning++;
+            else if (days <= 30) info++;
+            else                 healthy++;
+        });
+
+        const allAlerts = alertsData.alerts || alertsData || [];
+        const activeAlerts = (Array.isArray(allAlerts) ? allAlerts : []).filter(a => a.status === 'active');
+
+        let html = '<div class="card" style="margin-bottom:1rem">' +
+            '<h3>Certificate Monitoring</h3>' +
+            '<p style="color:var(--muted);font-size:0.85rem;margin-bottom:1rem">Auto-checks every hour. Alerts sent via Slack/webhook.</p>' +
+            '<div class="stats">' +
+            '<div class="card stat" style="border-left:3px solid var(--danger)"><div class="label">Critical (&lt;7d)</div><div class="value" style="color:var(--danger)">' + critical + '</div></div>' +
+            '<div class="card stat" style="border-left:3px solid var(--warning)"><div class="label">Warning (&lt;14d)</div><div class="value" style="color:var(--warning)">' + warning + '</div></div>' +
+            '<div class="card stat" style="border-left:3px solid var(--primary)"><div class="label">Info (&lt;30d)</div><div class="value">' + info + '</div></div>' +
+            '<div class="card stat" style="border-left:3px solid var(--success)"><div class="label">Healthy</div><div class="value" style="color:var(--success)">' + healthy + '</div></div>' +
+            '</div></div>';
+
+        html += '<div class="card"><h3>Active Alerts</h3>';
+        if (activeAlerts.length === 0) {
+            html += '<p style="color:var(--success)">No active alerts</p>';
+        } else {
+            html += '<table><thead><tr><th>Severity</th><th>Title</th><th>Domain</th><th>Time</th></tr></thead><tbody>';
+            activeAlerts.forEach(a => {
+                const sev = (a.severity || 'info').toLowerCase();
+                const badgeCls = sev === 'critical' ? 'badge-expired' : sev === 'warning' ? 'badge-pending' : 'badge-active';
+                const ts = a.created_at || a.timestamp || a.triggered_at || '';
+                const timeStr = typeof shortTime === 'function' ? shortTime(ts) : ts;
+                html += '<tr>' +
+                    '<td><span class="badge ' + badgeCls + '">' + escapeHtml(a.severity || 'info') + '</span></td>' +
+                    '<td>' + escapeHtml(a.title || a.name || '-') + '</td>' +
+                    '<td>' + escapeHtml(a.domain || a.cert_domain || '-') + '</td>' +
+                    '<td style="font-size:0.8rem">' + escapeHtml(timeStr) + '</td>' +
+                    '</tr>';
+            });
+            html += '</tbody></table>';
+        }
+        html += '</div>';
+
+        el.innerHTML = html;
+    }).catch(e => {
+        el.innerHTML = '<div class="card"><p style="color:var(--danger)">' + escapeHtml(e.message || 'Failed to load monitoring data') + '</p></div>';
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1551,7 +1597,7 @@ function runJob(job) {
 
 function sendTestAlert() {
     apiPost('/api/v1/alerts/test', {}).then(d => {
-        if (d.delivered) {
+        if (d.delivered || d.sent) {
             alert('Delivered via: ' + (d.channels || []).join(', '));
         } else {
             alert('Not delivered.\n\n' + (d.error || 'no channel configured'));
@@ -5314,5 +5360,114 @@ function cmsCmsAuditExport() {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'cert-audit-' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+}
+
+// ---------------------------------------------------------------------------
+// VSatellite command dispatch
+// ---------------------------------------------------------------------------
+function dispatchVSatCommand(agentId) {
+    const command = prompt('Enter command (scan_cidr / health_check / deploy_cert):');
+    if (!command) return;
+    const valid = ['scan_cidr', 'health_check', 'deploy_cert'];
+    if (!valid.includes(command.trim())) {
+        alert('Invalid command. Must be one of: ' + valid.join(', '));
+        return;
+    }
+    apiPost('/api/v1/vsatellites/' + encodeURIComponent(agentId) + '/command', { command: command.trim(), args: {} })
+        .then(d => {
+            alert('Job ID: ' + (d.job_id || '-') + '\nStatus: ' + (d.status || '-') + '\nEstimated completion: ' + (d.estimated_completion || '-'));
+            setTimeout(loadVSatellites, 2000);
+        })
+        .catch(e => alert(e.message));
+}
+
+// ---------------------------------------------------------------------------
+// VSatellite decommission
+// ---------------------------------------------------------------------------
+function decommissionVSat(agentId, name) {
+    if (!confirm('Decommission vSatellite "' + name + '"? This cannot be undone.')) return;
+    const token = localStorage.getItem('gw_token');
+    fetch('/api/v1/vsatellites/' + encodeURIComponent(agentId), {
+        method: 'DELETE',
+        headers: { 'Authorization': 'Bearer ' + token }
+    })
+        .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(new Error(e.error || 'Delete failed'))))
+        .then(() => {
+            alert('vSatellite "' + name + '" has been decommissioned.');
+            loadVSatellites();
+        })
+        .catch(e => alert(e.message));
+}
+
+// ---------------------------------------------------------------------------
+// CA account test connection
+// ---------------------------------------------------------------------------
+function testCAAccount(name) {
+    apiPost('/api/v1/ca/accounts/' + encodeURIComponent(name) + '/test', {})
+        .then(d => {
+            alert('Connected: ' + (d.connected !== undefined ? d.connected : '-') +
+                  '\nLatency: ' + (d.latency !== undefined ? d.latency + 'ms' : '-') +
+                  '\nSSL Valid: ' + (d.ssl_valid !== undefined ? d.ssl_valid : '-'));
+        })
+        .catch(e => alert(e.message));
+}
+
+// ---------------------------------------------------------------------------
+// CA account set default
+// ---------------------------------------------------------------------------
+function makeCADefault(name) {
+    if (!confirm('Set "' + name + '" as the default CA account?')) return;
+    apiPost('/api/v1/ca/accounts/' + encodeURIComponent(name) + '/default', {})
+        .then(() => {
+            alert('"' + name + '" is now the default CA account.');
+            loadAuthorities();
+        })
+        .catch(e => alert(e.message));
+}
+
+// ---------------------------------------------------------------------------
+// CA order refresh
+// ---------------------------------------------------------------------------
+function refreshCAOrder(certId) {
+    apiPost('/api/v1/ca/orders/' + encodeURIComponent(certId) + '/refresh', {})
+        .then(d => {
+            alert('Order ID: ' + (d.id || d.order_id || '-') +
+                  '\nStatus: ' + (d.status || '-') +
+                  '\nNext check: ' + (d.next_check || '-'));
+        })
+        .catch(e => alert(e.message));
+}
+
+// ---------------------------------------------------------------------------
+// Deploy target test
+// ---------------------------------------------------------------------------
+function testDeployTarget(id) {
+    apiPost('/api/v1/deploy/targets/' + encodeURIComponent(id) + '/test', {})
+        .then(d => {
+            alert('Reachable: ' + (d.reachable !== undefined ? d.reachable : '-') +
+                  '\nTLS Version: ' + (d.tls_version || '-') +
+                  '\nResponse: ' + (d.response_ms !== undefined ? d.response_ms + 'ms' : '-'));
+        })
+        .catch(e => alert(e.message));
+}
+
+// ---------------------------------------------------------------------------
+// Inventory deployment status update
+// ---------------------------------------------------------------------------
+function updateDeployStatus(id, status) {
+    apiPost('/api/v1/inventory/deployments/' + encodeURIComponent(id) + '/status', { status })
+        .then(() => loadInventory())
+        .catch(e => alert(e.message));
+}
+
+// ---------------------------------------------------------------------------
+// Export report download
+// ---------------------------------------------------------------------------
+function downloadExport(format) {
+    const date = new Date().toISOString().slice(0, 10);
+    const a = document.createElement('a');
+    a.href = window.location.origin + '/api/v1/reports/export?format=' + encodeURIComponent(format);
+    a.download = 'cert-report-' + date + '.' + format;
     a.click();
 }

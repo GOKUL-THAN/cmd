@@ -1,6 +1,25 @@
 // CLM Admin Portal — SaaS Control Plane UI
 // Auth: Keycloak (Direct Grant) | Manages: Tenants, Users, Groups, Cloud Accounts, Gateways
 
+const LOCAL_DEMO_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+if (!LOCAL_DEMO_HOSTS.has(window.location.hostname)) {
+    localStorage.removeItem('clm_token');
+    localStorage.removeItem('clm_refresh_token');
+    document.title = 'CLM Admin Portal - Demo Unavailable';
+    document.getElementById('sidebar').remove();
+    document.querySelector('.main').remove();
+
+    const loginCard = document.getElementById('login-card');
+    if (loginCard) {
+        const heading = document.createElement('h2');
+        heading.textContent = 'Hosted demo unavailable';
+        const notice = document.createElement('p');
+        notice.textContent = 'This deployment uses mock authentication and is disabled for safety. Do not enter passwords or other credentials.';
+        notice.style.cssText = 'color:var(--muted);font-size:0.9rem;line-height:1.5;margin-top:0.75rem';
+        loginCard.replaceChildren(heading, notice);
+    }
+}
+
 const API = window.location.origin;
 const KEYCLOAK_TOKEN_URL = window.location.origin + '/auth/realms/clm/protocol/openid-connect/token';
 const KEYCLOAK_CLIENT_ID = 'clm-admin-portal';
@@ -909,7 +928,39 @@ function loadSSO() {
     </div>`;
 }
 
-function saveSSO() { alert('SSO configuration saved (demo). In production, calls POST /api/v1/tenants/:id/sso'); }
+function saveSSO() {
+    const provider = document.getElementById('sso-provider').value;
+    const client_id = document.getElementById('sso-client-id').value;
+    const client_secret = document.getElementById('sso-client-secret').value;
+    const domains = document.getElementById('sso-domains').value;
+    const auto_provision = document.getElementById('sso-auto').value === 'true';
+    const tenantId = activeTenantId || 'tenant-enterprise-uat';
+
+    let statusEl = document.getElementById('sso-save-status');
+    if (!statusEl) {
+        statusEl = document.createElement('div');
+        statusEl.id = 'sso-save-status';
+        statusEl.style.cssText = 'margin-top:0.75rem;font-size:0.875rem;padding:0.5rem 0.75rem;border-radius:0.375rem';
+        const btn = document.querySelector('[onclick="saveSSO()"]');
+        if (btn && btn.parentNode) btn.parentNode.insertBefore(statusEl, btn.nextSibling);
+    }
+    statusEl.style.color = 'var(--muted)';
+    statusEl.textContent = 'Saving...';
+
+    apiPost('/api/v1/tenants/' + tenantId + '/sso', {
+        provider,
+        client_id,
+        client_secret,
+        domains: domains.split(',').map(s => s.trim()).filter(Boolean),
+        auto_provision
+    }).then(() => {
+        statusEl.style.color = 'var(--success)';
+        statusEl.textContent = 'SSO configuration saved. Provider: ' + provider;
+    }).catch(e => {
+        statusEl.style.color = 'var(--danger)';
+        statusEl.textContent = e.message || 'Failed to save SSO configuration.';
+    });
+}
 
 // --- Organization Page (Client Admin) ---
 function loadOrganization() {
@@ -941,7 +992,7 @@ function loadOrganization() {
                     <div class="form-group"><label>Plan</label>
                         <div style="display:flex;align-items:center;gap:0.5rem">
                             <span class="badge badge-active" style="font-size:0.85rem;padding:0.3rem 0.6rem">${(t.plan||'free').toUpperCase()}</span>
-                            <button class="btn" style="font-size:0.75rem;border:1px solid var(--primary);color:var(--primary)" onclick="alert('Contact sales@aiforgers.tech to upgrade your plan.')">Upgrade Plan</button>
+                            <button class="btn" style="font-size:0.75rem;border:1px solid var(--primary);color:var(--primary)" onclick="navigate('billing')">Upgrade Plan</button>
                         </div>
                     </div>
                     <div class="form-group"><label>Data Region</label><input value="${t.data_region||'ap-south-1'}" disabled style="width:100%;background:#f8fafc"></div>
@@ -4370,6 +4421,13 @@ function exportContractsJSON() {
     dlAnchorElem.click();
 }
 
+function downloadCLMAuditPDF() {
+    const a = document.createElement('a');
+    a.href = API + '/api/v1/clm-reports/export?format=pdf';
+    a.download = 'clm_audit_report.pdf';
+    a.click();
+}
+
 // ------------------------------------------------------------------------------
 // 2. INTAKE & REQUEST MANAGEMENT
 // ------------------------------------------------------------------------------
@@ -5622,19 +5680,19 @@ function loadCLMAnalytics() {
                     <div style="font-size:0.85rem;display:flex;flex-direction:column;gap:0.5rem">
                         <div>
                             <div style="display:flex;justify-content:space-between"><span>Intake to Authoring Draft</span><strong>${ct.request_to_draft} days</strong></div>
-                            <div style="background:#e2e8f0;height:6px;border-radius:3px;margin-top:2px"><div style="background:var(--primary);width:20%;height:100%"></div></div>
+                            <div style="background:#e2e8f0;height:6px;border-radius:3px;margin-top:2px"><div style="background:var(--primary);width:${Math.min(100, Math.round(ct.request_to_draft / ct.average_days * 100))}%;height:100%"></div></div>
                         </div>
                         <div>
                             <div style="display:flex;justify-content:space-between"><span>Negotiation & Redlines</span><strong>${ct.draft_to_negotiation} days</strong></div>
-                            <div style="background:#e2e8f0;height:6px;border-radius:3px;margin-top:2px"><div style="background:#f59e0b;width:55%;height:100%"></div></div>
+                            <div style="background:#e2e8f0;height:6px;border-radius:3px;margin-top:2px"><div style="background:#f59e0b;width:${Math.min(100, Math.round(ct.draft_to_negotiation / ct.average_days * 100))}%;height:100%"></div></div>
                         </div>
                         <div>
                             <div style="display:flex;justify-content:space-between"><span>L1-L3 Approval Routing</span><strong>${ct.negotiation_to_approval} days</strong></div>
-                            <div style="background:#e2e8f0;height:6px;border-radius:3px;margin-top:2px"><div style="background:#8b5cf6;width:35%;height:100%"></div></div>
+                            <div style="background:#e2e8f0;height:6px;border-radius:3px;margin-top:2px"><div style="background:#8b5cf6;width:${Math.min(100, Math.round(ct.negotiation_to_approval / ct.average_days * 100))}%;height:100%"></div></div>
                         </div>
                         <div>
                             <div style="display:flex;justify-content:space-between"><span>Signatures & Digital Sealing</span><strong>${ct.approval_to_execution} days</strong></div>
-                            <div style="background:#e2e8f0;height:6px;border-radius:3px;margin-top:2px"><div style="background:var(--success);width:40%;height:100%"></div></div>
+                            <div style="background:#e2e8f0;height:6px;border-radius:3px;margin-top:2px"><div style="background:var(--success);width:${Math.min(100, Math.round(ct.approval_to_execution / ct.average_days * 100))}%;height:100%"></div></div>
                         </div>
                     </div>
                 </div>
@@ -5660,7 +5718,7 @@ function loadCLMAnalytics() {
                 </div>
                 <div style="display:flex;gap:0.5rem">
                     <button class="btn" style="background:#475569;color:#fff" onclick="exportContractsJSON()">Export Full Portfolio (JSON)</button>
-                    <button class="btn btn-primary" onclick="alert('Exporting PDF audit package for governance committee...')">Download Audit Report (PDF)</button>
+                    <button class="btn btn-primary" onclick="downloadCLMAuditPDF()">Download Audit Report (PDF)</button>
                 </div>
             </div>
         `;
@@ -5712,7 +5770,7 @@ function loadCorporateDepartments() {
                     </div>
                     <div style="border-top:1px solid var(--border);padding-top:0.75rem;display:flex;justify-content:space-between;align-items:center">
                         <button class="btn btn-primary" style="font-size:0.8rem" onclick="viewDepartmentContracts('${d.code}')">View ${esc(d.code)} Contracts</button>
-                        <button class="btn" style="background:#f1f5f9;color:#334155;font-size:0.75rem" onclick="alert('${esc(d.action_label)}: Feature verified and operational for ' + '${esc(d.name)}')">${esc(d.action_label)}</button>
+                        <button class="btn" style="background:#f1f5f9;color:#334155;font-size:0.75rem" onclick="viewDepartmentContracts('${d.code}')">${esc(d.action_label)}</button>
                     </div>
                 </div>
             `;
