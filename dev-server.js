@@ -3841,7 +3841,7 @@ function handleMockAPI(req, res) {
 
     if (pathname === '/api/v1/status') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'online', version: '1.2.0', uptime: '14d 6h', last_sync: new Date().toISOString(), gateway_id: 'sat-enterprise-ind-aps1', region: 'ap-south-1' }));
+        res.end(JSON.stringify({ status: 'online', version: '1.2.0', uptime: '14d 6h', last_sync: new Date().toISOString(), gateway_id: 'sat-enterprise-ind-aps1', region: 'ap-south-1', name: 'AWS Mumbai UAT Gateway', saas_endpoint: 'https://clm-website-1cc7.vercel.app', certificates: mockCerts.length, expiring_30d: mockCerts.filter(function(c){return c.days_left>=0&&c.days_left<=30;}).length, pending_approvals: mockApprovals.filter(function(a){return a.status==='pending';}).length, agents: { total_agents: mockAgents.length, online_agents: mockAgents.filter(function(a){return a.status==='active';}).length } }));
         return true;
     }
     if (pathname === '/api/v1/acme/status') {
@@ -3855,7 +3855,7 @@ function handleMockAPI(req, res) {
             { id:'alert-001', severity:'critical', title:'Certificate Expiring in 12 Days', domain:'api-uat.enterprise.internal', created_at:new Date().toISOString(), status:'active' },
             { id:'alert-002', severity:'warning', title:'Certificate Renewal Recommended', domain:'*.enterprise.internal', created_at:new Date(Date.now()-86400000).toISOString(), status:'active' },
             { id:'alert-003', severity:'info', title:'Discovery Scan Completed', domain:'10.125.0.0/16', created_at:new Date(Date.now()-3600000).toISOString(), status:'resolved' }
-        ], total: 3 }));
+        ], total: 3, stats: { enabled: true, raised: 3, delivered: 2, failed: 1, channels: ['email','slack','webhook'], warn_days: 30, critical_days: 7, cooldown: '4h' } }));
         return true;
     }
     if (pathname === '/api/v1/alerts/test' && req.method === 'POST') {
@@ -4036,15 +4036,48 @@ function handleMockAPI(req, res) {
         return true;
     }
     if (pathname === '/api/v1/lifecycle') {
+        var lcRisk={expired:0,critical:0,warning:0,notice:0,healthy:0,unknown:0};
+        mockCerts.forEach(function(c){
+            var d=c.days_left;
+            if(d===undefined||d===null||isNaN(d)){lcRisk.unknown++;}
+            else if(d<0){lcRisk.expired++;}
+            else if(d<=7){lcRisk.critical++;}
+            else if(d<=30){lcRisk.warning++;}
+            else if(d<=60){lcRisk.notice++;}
+            else{lcRisk.healthy++;}
+        });
+        var lcByIssuer={};
+        mockCerts.forEach(function(c){
+            var iss=c.issuer||'Unknown';
+            if(!lcByIssuer[iss]){lcByIssuer[iss]={issuer:iss,total:0,at_risk:0};}
+            lcByIssuer[iss].total++;
+            if(c.days_left<=30&&!c.revoked){lcByIssuer[iss].at_risk++;}
+        });
+        var lcFindings=mockCerts.filter(function(c){
+            return (c.days_left!==undefined&&c.days_left<=30)||(c.is_self_signed)||(c.key_algorithm==='RSA'&&c.key_size<2048);
+        }).sort(function(a,b){return (a.days_left||0)-(b.days_left||0);});
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ stages: [
-            { stage:'discovery', count:3, last_run:new Date(Date.now()-3600000).toISOString() },
-            { stage:'issuance', count:12, last_run:new Date(Date.now()-86400000).toISOString() },
-            { stage:'deployment', count:5, last_run:new Date(Date.now()-3600000).toISOString() },
-            { stage:'verification', count:3, last_run:new Date().toISOString() },
-            { stage:'renewal', count:1, last_run:new Date(Date.now()-7200000).toISOString() },
-            { stage:'revocation', count:0, last_run:null }
-        ]}));
+        res.end(JSON.stringify({
+            summary: { total: mockCerts.length, expired: lcRisk.expired, critical: lcRisk.critical, warning: lcRisk.warning, notice: lcRisk.notice, healthy: lcRisk.healthy, unknown: lcRisk.unknown },
+            risk: lcRisk,
+            expiry_buckets: [
+                {window:'Expired',count:lcRisk.expired},
+                {window:'0-7 days',count:lcRisk.critical},
+                {window:'8-30 days',count:lcRisk.warning},
+                {window:'31-60 days',count:lcRisk.notice},
+                {window:'61+ days',count:lcRisk.healthy},
+                {window:'Unknown',count:lcRisk.unknown}
+            ],
+            hygiene: {
+                self_signed: mockCerts.filter(function(c){return c.is_self_signed;}).length,
+                rsa_below_2048: mockCerts.filter(function(c){return c.key_algorithm==='RSA'&&c.key_size<2048;}).length,
+                no_san: mockCerts.filter(function(c){return !c.sans||c.sans.length===0;}).length
+            },
+            by_issuer: Object.values(lcByIssuer),
+            findings: lcFindings,
+            total: mockCerts.length,
+            assessed_at: new Date().toISOString()
+        }));
         return true;
     }
     if (pathname === '/api/v1/policies') {
@@ -4076,10 +4109,10 @@ function handleMockAPI(req, res) {
     if (pathname === '/api/v1/scheduler') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ jobs: [
-            { id:'job-renew-01', type:'renewal', schedule:'0 2 * * *', enabled:true, last_run:new Date(Date.now()-3600000).toISOString(), next_run:new Date(Date.now()+82800000).toISOString(), status:'completed' },
-            { id:'job-discover-01', type:'discovery', schedule:'0 */6 * * *', enabled:true, last_run:new Date(Date.now()-7200000).toISOString(), next_run:new Date(Date.now()+14400000).toISOString(), status:'completed' },
-            { id:'job-verify-01', type:'verification', schedule:'*/30 * * * *', enabled:true, last_run:new Date(Date.now()-1800000).toISOString(), next_run:new Date(Date.now()+1800000).toISOString(), status:'completed' },
-            { id:'job-deploy-01', type:'deployment', schedule:'manual', enabled:true, last_run:new Date(Date.now()-86400000).toISOString(), next_run:null, status:'completed' }
+            { job:'Certificate Renewal', detail:'Auto-renew certificates expiring within 30 days', interval:'Daily 02:00', next_run:new Date(Date.now()+82800000).toISOString(), enabled:true, last_run:{ok:true,summary:'1 certificate renewed',started_at:new Date(Date.now()-3600000).toISOString(),duration:'2m 14s',trigger:'scheduled',errors:[]} },
+            { job:'CIDR Discovery', detail:'Scan configured network ranges for new certificates', interval:'Every 6 hours', next_run:new Date(Date.now()+14400000).toISOString(), enabled:true, last_run:{ok:true,summary:'Scanned 256 IPs, found 8 certs',started_at:new Date(Date.now()-7200000).toISOString(),duration:'4m 32s',trigger:'scheduled',errors:[]} },
+            { job:'Endpoint Verification', detail:'Verify TLS handshake on all monitored endpoints', interval:'Every 30 min', next_run:new Date(Date.now()+1800000).toISOString(), enabled:true, last_run:{ok:true,summary:'3 endpoints healthy',started_at:new Date(Date.now()-1800000).toISOString(),duration:'0m 18s',trigger:'scheduled',errors:[]} },
+            { job:'Certificate Deployment', detail:'Deploy pending certificates to configured targets', interval:'Manual', next_run:null, enabled:true, last_run:{ok:true,summary:'0 deployments pending',started_at:new Date(Date.now()-86400000).toISOString(),duration:'0m 5s',trigger:'manual',errors:[]} }
         ], total: 4 }));
         return true;
     }
